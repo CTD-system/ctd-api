@@ -1,7 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, OneToMany } from 'typeorm';
-import { User } from './user.entity';
-import { Modulo } from './modulo.entity';
-import { Notificacion } from './notificacion.entity';
+import { User } from '../../users/entities/user.entity';
+import { Modulo } from '../../modulos/entities/modulo.entity';
 
 export enum ExpedienteEstado {
   BORRADOR = 'borrador',
@@ -39,6 +38,5 @@ export class Expediente {
   @OneToMany(() => Modulo, modulo => modulo.expediente)
   modulos: Modulo[];
 
-  @OneToMany(() => Notificacion, notificacion => notificacion.expediente)
-  notificaciones: Notificacion[];
+  
 }

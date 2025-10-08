@@ -1,6 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne } from 'typeorm';
-import { Documento } from './documento.entity';
-import { User } from './user.entity';
+import { Documento } from '../../documentos/entities/documento.entity';
+import { User } from '../../users/entities/user.entity';
 
 export enum HistorialAccion {
   CREADO = 'creado',

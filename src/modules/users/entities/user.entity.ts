@@ -1,8 +1,7 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToMany } from 'typeorm';
-import { Expediente } from './expediente.entity';
-import { Documento } from './documento.entity';
-import { Notificacion } from './notificacion.entity';
-import { Plantilla } from './plantilla.entity';
+import { Expediente } from '../../expedientes/entities/expediente.entity';
+import { Documento } from '../../documentos/entities/documento.entity';
+import { Plantilla } from '../../plantillas/entities/plantilla.entity';
 
 export enum UserRole {
   ADMIN = 'admin',
@@ -25,7 +24,7 @@ export class User {
   @Column()
   password_hash: string;
 
-  @Column({ type: 'enum', enum: UserRole })
+  @Column({ type: 'enum', enum: UserRole,default: UserRole.USUARIO  })
   role: UserRole;
 
   @CreateDateColumn({ type: 'timestamp' })
@@ -40,8 +39,6 @@ export class User {
   @OneToMany(() => Documento, documento => documento.subido_por)
   documentos: Documento[];
 
-  @OneToMany(() => Notificacion, notificacion => notificacion.usuario)
-  notificaciones: Notificacion[];
 
   @OneToMany(() => Plantilla, plantilla => plantilla.creado_por)
   plantillas: Plantilla[];

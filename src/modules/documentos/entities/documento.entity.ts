@@ -1,7 +1,7 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, OneToMany } from 'typeorm';
-import { Modulo } from './modulo.entity';
-import { User } from './user.entity';
-import { HistorialDocumento } from './historial_documento.entity';
+import { Modulo } from '../../modulos/entities/modulo.entity';
+import { User } from '../../users/entities/user.entity';
+import { HistorialDocumento } from '../../historial/entities/historial_documento.entity';
 
 export enum DocumentoTipo {
   PLANTILLA = 'plantilla',

@@ -1,6 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, OneToMany } from 'typeorm';
-import { Expediente } from './expediente.entity';
-import { Documento } from './documento.entity';
+import { Expediente } from '../../expedientes/entities/expediente.entity';
+import { Documento } from '../../documentos/entities/documento.entity';
 
 export enum ModuloEstado {
   BORRADOR = 'borrador',
