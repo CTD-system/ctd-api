@@ -61,5 +61,15 @@ fs.mkdirSync(baseDir, { recursive: true });
 
     return { message: 'CTD exportado correctamente', zipPath };
   }
+
+  async exportarDocumento(id: string) {
+    const documento = await this.documentoRepo.findOne({ where: { id } });
+
+    if (!documento) {
+      throw new NotFoundException('Documento no encontrado');
+    }
+
+    return documento;
+  }
 }
 

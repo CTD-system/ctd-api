@@ -19,16 +19,16 @@ export class ExpedientesController {
 
   @Get(':id')
   findOne(@Param('id') id: string) {
-    return this.expedientesService.findOne(+id);
+    return this.expedientesService.findOne(id);
   }
 
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateExpedienteDto: UpdateExpedienteDto) {
-    return this.expedientesService.update(+id, updateExpedienteDto);
+    return this.expedientesService.update(id, updateExpedienteDto);
   }
 
   @Delete(':id')
   remove(@Param('id') id: string) {
-    return this.expedientesService.remove(+id);
+    return this.expedientesService.remove(id);
   }
 }

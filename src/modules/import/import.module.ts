@@ -4,9 +4,13 @@ import { ImportController } from './import.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Documento } from '../documentos/entities/documento.entity';
 import { Plantilla } from '../plantillas/entities/plantilla.entity';
+import { Expediente } from '../expedientes/entities/expediente.entity';
+import { Modulo } from '../modulos/entities/modulo.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Documento, Plantilla])],
+  imports: [
+    TypeOrmModule.forFeature([Documento, Plantilla, Expediente, Modulo]),
+  ],
   providers: [ImportService],
   controllers: [ImportController],
 })

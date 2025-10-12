@@ -1,4 +1,3 @@
-// src/modulos/dto/update-modulo.dto.ts
 import { PartialType } from '@nestjs/mapped-types';
 import { CreateModuloDto } from './create-modulo.dto';
 

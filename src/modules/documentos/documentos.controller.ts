@@ -7,9 +7,11 @@ import { UpdateDocumentoDto } from './dto/update-documento.dto';
 export class DocumentosController {
   constructor(private readonly documentosService: DocumentosService) {}
 
+  
+
   @Post()
-  create(@Body() createDocumentoDto: CreateDocumentoDto) {
-    return this.documentosService.create(createDocumentoDto);
+  create(@Body() dto: CreateDocumentoDto) {
+    return this.documentosService.create(dto);
   }
 
   @Get()
@@ -19,16 +21,16 @@ export class DocumentosController {
 
   @Get(':id')
   findOne(@Param('id') id: string) {
-    return this.documentosService.findOne(+id);
+    return this.documentosService.findOne(id);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateDocumentoDto: UpdateDocumentoDto) {
-    return this.documentosService.update(+id, updateDocumentoDto);
+  update(@Param('id') id: string, @Body() dto: UpdateDocumentoDto) {
+    return this.documentosService.update(id, dto);
   }
 
   @Delete(':id')
   remove(@Param('id') id: string) {
-    return this.documentosService.remove(+id);
+    return this.documentosService.remove(id);
   }
 }

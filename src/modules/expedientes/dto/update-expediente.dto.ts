@@ -1,5 +1,15 @@
-// src/expedientes/dto/update-expediente.dto.ts
-import { PartialType } from '@nestjs/mapped-types';
-import { CreateExpedienteDto } from './create-expediente.dto';
+import { IsOptional, IsString, IsIn } from 'class-validator';
 
-export class UpdateExpedienteDto extends PartialType(CreateExpedienteDto) {}
+export class UpdateExpedienteDto {
+  @IsOptional()
+  @IsString()
+  nombre?: string;
+
+  @IsOptional()
+  @IsString()
+  descripcion?: string;
+
+  @IsOptional()
+  @IsIn(['borrador', 'en_revision', 'aprobado', 'enviado'])
+  estado?: string;
+}
