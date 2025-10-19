@@ -1,3 +1,23 @@
+import { MinioService } from '../minio.service';
+import { createWriteStream, existsSync, mkdirSync } from 'fs';
+import {
+  Document,
+  Packer,
+  Paragraph,
+  HeadingLevel,
+  Table,
+  TableRow,
+  TableCell,
+  TextRun,
+  AlignmentType,
+  Header,
+  Footer,
+  PageNumber,
+  TableOfContents,
+  WidthType,
+} from 'docx';
+import PDFDocument from 'pdfkit';
+import * as path from 'path';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -8,6 +28,7 @@ import { Modulo } from '../modulos/entities/modulo.entity';
 import { User } from '../users/entities/user.entity';
 import { HistorialService } from '../historial/historial.service';
 import { HistorialAccion } from '../historial/entities/historial_documento.entity';
+import * as fs from 'fs';
 
 @Injectable()
 export class DocumentosService {
@@ -22,19 +43,586 @@ export class DocumentosService {
     private readonly userRepo: Repository<User>,
 
     private readonly historialService: HistorialService, // ✅ inyección del historial
+    private readonly minioService: MinioService,
   ) {}
+
+  // Crear documento Word con índice y capítulos
+  async crearDocumentoWord(body: {
+    titulo: string;
+    encabezado?: string;
+    capitulos?: {
+      titulo: string;
+      contenido?: string;
+      subCapitulos?: {
+        titulo: string;
+        contenido?: string;
+        tablas?: { encabezados: string[]; filas: string[][] }[];
+        anexos?: string[];
+      }[];
+      tablas?: { encabezados: string[]; filas: string[][] }[];
+      placeholders?: string[];
+    }[];
+    moduloId?: string;
+    anexos?: string[];
+    subido_por?: string;
+  }) {
+    const { titulo, encabezado, capitulos, moduloId, anexos, subido_por } =
+      body;
+
+    const children: (Paragraph | Table)[] = [];
+
+    // --- Título principal ---
+    children.push(
+      new Paragraph({
+        text: titulo,
+        heading: HeadingLevel.TITLE,
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 400 },
+        style: 'Title',
+      }),
+    );
+
+    // --- Índice automático ---
+    (new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 400 },
+      children: [
+        new TextRun({
+          text: "⚠️ Para ver correctamente la tabla de contenido, presione F9 y elija 'Actualizar toda la tabla'.",
+          font: 'Arial',
+          color: 'FF0000',
+          italics: true,
+        }),
+      ],
+    }),
+      children.push(
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing: { after: 200 },
+          children: [
+            new TextRun({
+              text: 'Indice',
+              bold: true,
+              font: 'Arial',
+              color: '000000',
+              size: 28,
+            }),
+          ],
+        }),
+      ));
+
+    children.push(
+      new TableOfContents('Tabla de Contenido', {
+        hyperlink: true,
+        headingStyleRange: '1-2',
+      }),
+    );
+
+    children.push(new Paragraph({ children: [], pageBreakBefore: true }));
+
+    let modulo: Modulo | undefined = undefined;
+    if (moduloId)
+      modulo =
+        (await this.moduloRepo.findOne({ where: { id: moduloId } })) ??
+        undefined;
+
+    let anexosDocs: Documento[] = [];
+    if (anexos && anexos.length > 0) {
+      console.log('ANEXOS existe', anexosDocs);
+      anexosDocs = await this.documentoRepo.findByIds(anexos);
+    }
+    console.log('ANEXOS', anexosDocs);
+
+    // --- Capítulos y subcapítulos ---
+    if (capitulos && capitulos.length > 0) {
+      for (const [i, cap] of capitulos.entries()) {
+        if (i > 0)
+          children.push(new Paragraph({ children: [], pageBreakBefore: true }));
+
+        // Capítulo principal
+        children.push(
+          new Paragraph({
+            heading: HeadingLevel.HEADING_1,
+            children: [
+              new TextRun({
+                text: `${i + 1}. ${cap.titulo}`,
+                bold: true,
+                color: '000000',
+                font: 'Arial',
+                size: 32, // 12pt
+              }),
+            ],
+            spacing: { after: 200 },
+          }),
+        );
+
+        // Contenido del capítulo
+        if (cap.contenido) {
+          children.push(
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: cap.contenido,
+                  font: 'Arial',
+                  color: '000000',
+                  size: 24, // 12pt
+                }),
+              ],
+              alignment: AlignmentType.JUSTIFIED,
+              spacing: { after: 150 },
+            }),
+          );
+        }
+
+        // Tablas del capítulo
+        if (cap.tablas) {
+          cap.tablas.forEach((tabla) => {
+            const rows = [
+              new TableRow({
+                children: tabla.encabezados.map(
+                  (h) =>
+                    new TableCell({
+                      children: [
+                        new Paragraph({
+                          children: [
+                            new TextRun({
+                              text: h,
+                              bold: true,
+                              font: 'Arial',
+                              color: '000000',
+                            }),
+                          ],
+                        }),
+                      ],
+                    }),
+                ),
+              }),
+              ...tabla.filas.map(
+                (fila) =>
+                  new TableRow({
+                    children: fila.map(
+                      (col) =>
+                        new TableCell({
+                          children: [
+                            new Paragraph({
+                              children: [
+                                new TextRun({
+                                  text: col,
+                                  font: 'Arial',
+                                  color: '000000',
+                                }),
+                              ],
+                            }),
+                          ],
+                        }),
+                    ),
+                  }),
+              ),
+            ];
+            children.push(
+              new Table({
+                rows,
+                width: { size: 100, type: WidthType.PERCENTAGE },
+              }),
+            );
+          });
+        }
+
+        // Subcapítulos
+        if (cap.subCapitulos && cap.subCapitulos.length > 0) {
+          for (const [j, sub] of cap.subCapitulos.entries()) {
+            children.push(
+              new Paragraph({
+                heading: HeadingLevel.HEADING_2,
+                children: [
+                  new TextRun({
+                    text: `${i + 1}.${j + 1} ${sub.titulo}`,
+                    bold: true,
+                    color: '000000',
+                    font: 'Arial',
+                    size: 28,
+                  }),
+                ],
+                spacing: { after: 150 },
+              }),
+            );
+
+            if (sub.contenido) {
+              children.push(
+                new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: sub.contenido,
+                      font: 'Arial',
+                      color: '000000',
+                      size: 24,
+                    }),
+                  ],
+                  alignment: AlignmentType.JUSTIFIED,
+                  spacing: { after: 100 },
+                }),
+              );
+            }
+
+            // --- Tablas del subcapítulo ---
+            if (sub.tablas && sub.tablas.length > 0) {
+              for (const tabla of sub.tablas) {
+                const rows = [
+                  new TableRow({
+                    children: tabla.encabezados.map(
+                      (h) =>
+                        new TableCell({
+                          children: [
+                            new Paragraph({
+                              children: [
+                                new TextRun({
+                                  text: h,
+                                  bold: true,
+                                  font: 'Arial',
+                                  color: '000000',
+                                }),
+                              ],
+                            }),
+                          ],
+                        }),
+                    ),
+                  }),
+                  ...tabla.filas.map(
+                    (fila) =>
+                      new TableRow({
+                        children: fila.map(
+                          (col) =>
+                            new TableCell({
+                              children: [
+                                new Paragraph({
+                                  children: [
+                                    new TextRun({
+                                      text: col,
+                                      font: 'Arial',
+                                      color: '000000',
+                                    }),
+                                  ],
+                                }),
+                              ],
+                            }),
+                        ),
+                      }),
+                  ),
+                ];
+
+                children.push(
+                  new Table({
+                    rows,
+                    width: { size: 100, type: WidthType.PERCENTAGE },
+                  }),
+                );
+              }
+            }
+
+            // --- Anexos del subcapítulo ---
+            if (sub.anexos && sub.anexos.length > 0) {
+              console.log('📎 Subanexos detectados:', sub.anexos);
+              console.log(`📄 Total párrafos generados: ${children.length}`);
+
+              const subAnexos = await this.documentoRepo.findByIds(sub.anexos);
+              console.log('📎 Subanexos detectados:', subAnexos);
+              for (const a of subAnexos) {
+                children.push(
+                  new Paragraph({
+                    children: [
+                      new TextRun({
+                        text: `Ver anexo: ${a.nombre}`,
+                        font: 'Arial',
+                        color: '000000',
+                        size: 24,
+                        italics: true,
+                      }),
+                    ],
+                    spacing: { after: 100 },
+                  }),
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // --- Encabezado ---
+    const header = encabezado
+      ? new Header({
+          children: [
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: encabezado,
+                  bold: true,
+                  font: 'Arial',
+                  color: '000000',
+                  size: 24,
+                }),
+                new TextRun({ text: '\tPágina ', font: 'Arial', size: 24 }),
+                new TextRun({
+                  children: [PageNumber.CURRENT],
+                  font: 'Arial',
+                  size: 24,
+                }),
+                new TextRun(' de '),
+                new TextRun({
+                  children: [PageNumber.TOTAL_PAGES],
+                  font: 'Arial',
+                  size: 24,
+                }),
+              ],
+              tabStops: [{ type: 'right', position: 9000 }],
+            }),
+          ],
+        })
+      : undefined;
+
+    // --- Pie de página ---
+    const footer = new Footer({
+      children: [
+        new Paragraph({
+          children: [
+            new TextRun('Página '),
+            new TextRun({ children: [PageNumber.CURRENT] }),
+            new TextRun(' de '),
+            new TextRun({ children: [PageNumber.TOTAL_PAGES] }),
+          ],
+          alignment: AlignmentType.CENTER,
+        }),
+      ],
+    });
+
+    console.log(`📄 Total párrafos generados: ${children.length}`);
+
+
+    // --- Crear documento ---
+    const doc = new Document({
+      sections: [
+        {
+          properties: {
+            page: {
+              margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
+            },
+          },
+          headers: header ? { default: header } : {},
+          footers: { default: footer },
+          children,
+        },
+      ],
+    });
+
+    // --- Guardar archivo ---
+    const uploadsPath = path.join('uploads', 'documentos');
+    if (!fs.existsSync(uploadsPath))
+      mkdirSync(uploadsPath, { recursive: true });
+    const fileName = `${Date.now()}_${titulo.replace(/\s/g, '_')}.docx`;
+    const filePath = path.join(uploadsPath, fileName);
+
+    const buffer = await Packer.toBuffer(doc);
+    fs.writeFileSync(filePath, buffer);
+
+    // --- Asociar a módulo si corresponde ---
+
+    if (modulo) {
+      const destinoMinio = `${modulo.ruta}/${fileName}`;
+      await this.minioService.uploadFile(
+        'ctd-expedientes',
+        destinoMinio,
+        filePath,
+      );
+    }
+
+    const subidoPorUser = subido_por
+      ? await this.userRepo.findOne({ where: { id: subido_por } })
+      : undefined;
+
+    const docEntity = this.documentoRepo.create({
+      nombre: fileName,
+      tipo: DocumentoTipo.PLANTILLA,
+      ruta_archivo: filePath,
+      modulo,
+      version: 1,
+      mime_type:
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      subido_por: subidoPorUser || undefined,
+      anexos: anexosDocs,
+    });
+
+    return this.documentoRepo.save(docEntity);
+  }
+
+  // Editar documento Word (agrega contenido/capítulos)
+  async editarDocumentoWord(
+    id: string,
+    body: { contenido: string; capitulos?: string[] },
+  ) {
+    const docEntity = await this.documentoRepo.findOne({ where: { id } });
+    if (!docEntity) throw new NotFoundException('Documento no encontrado');
+    // Leer y modificar el documento existente
+    const docx = require('docx');
+    const fs = require('fs');
+    const buffer = fs.readFileSync(docEntity.ruta_archivo);
+    // No hay soporte oficial para editar docx, así que se crea uno nuevo con el contenido adicional
+    const doc = new docx.Document({
+      sections: [
+        {
+          children: [
+            new docx.Paragraph({
+              text: body.contenido,
+              heading: docx.HeadingLevel.HEADING_1,
+            }),
+            ...(body.capitulos || []).map(
+              (c, i) => new docx.Paragraph(`Capítulo ${i + 1}: ${c}`),
+            ),
+          ],
+        },
+      ],
+    });
+    const newBuffer = await docx.Packer.toBuffer(doc);
+    fs.writeFileSync(docEntity.ruta_archivo, newBuffer);
+    await this.minioService.uploadFile(
+      'ctd-documentos',
+      docEntity.nombre,
+      docEntity.ruta_archivo,
+    );
+    return { message: 'Documento Word editado y subido a MinIO.' };
+  }
+
+  // Crear PDF con índice y capítulos
+  async crearDocumentoPDF(body: {
+    titulo: string;
+    capitulos: string[];
+    moduloId?: string;
+    expedienteId?: string;
+  }) {
+    const { titulo, capitulos, moduloId } = body;
+    const uploadsPath = path.join('uploads', 'documentos');
+    if (!existsSync(uploadsPath)) mkdirSync(uploadsPath, { recursive: true });
+    const fileName = `${Date.now()}_${titulo.replace(/\s/g, '_')}.pdf`;
+    const filePath = path.join(uploadsPath, fileName);
+    const doc = new PDFDocument();
+    const stream = createWriteStream(filePath);
+    doc.pipe(stream);
+    doc.fontSize(20).text(titulo, { align: 'center' });
+    doc.moveDown();
+    doc.fontSize(14).text('Índice');
+    capitulos.forEach((c, i) => doc.text(`${i + 1}. ${c}`));
+    doc.addPage();
+    capitulos.forEach((c, i) => {
+      doc.fontSize(16).text(`Capítulo ${i + 1}: ${c}`);
+      doc.moveDown();
+    });
+    doc.end();
+    await new Promise<void>((resolve) => stream.on('finish', resolve));
+    await this.minioService.uploadFile('ctd-documentos', fileName, filePath);
+    let modulo: Modulo | undefined = undefined;
+
+    if (moduloId)
+      modulo =
+        (await this.moduloRepo.findOne({ where: { id: moduloId } })) ??
+        undefined;
+    if (modulo) {
+      const destinoMinio = `${modulo.ruta}/${fileName}`;
+      await this.minioService.uploadFile(
+        'ctd-expedientes',
+        destinoMinio,
+        filePath,
+      );
+    }
+    const docEntity = this.documentoRepo.create({
+      nombre: fileName,
+      tipo: DocumentoTipo.PLANTILLA,
+      ruta_archivo: filePath,
+      modulo,
+      mime_type: 'application/pdf',
+    });
+    return this.documentoRepo.save(docEntity);
+  }
+
+  // Editar PDF (agrega contenido/capítulos)
+  async editarDocumentoPDF(
+    id: string,
+    body: { contenido: string; capitulos?: string[] },
+  ) {
+    const docEntity = await this.documentoRepo.findOne({ where: { id } });
+    if (!docEntity) throw new NotFoundException('Documento no encontrado');
+    // No hay edición directa de PDF, así que se crea uno nuevo con el contenido adicional
+    const filePath = docEntity.ruta_archivo;
+    const doc = new PDFDocument();
+    const stream = createWriteStream(filePath);
+    doc.pipe(stream);
+    doc.fontSize(16).text(body.contenido, { align: 'left' });
+    (body.capitulos || []).forEach((c, i) => {
+      doc.moveDown();
+      doc.fontSize(14).text(`Capítulo ${i + 1}: ${c}`);
+    });
+    doc.end();
+    await new Promise<void>((resolve) => stream.on('finish', resolve));
+    await this.minioService.uploadFile(
+      'ctd-documentos',
+      docEntity.nombre,
+      filePath,
+    );
+    return { message: 'PDF editado y subido a MinIO.' };
+  }
+
+  // Crear plantilla desde documento subido
+  async crearPlantillaDesdeDocumento(
+    file: any,
+    body: { moduloId?: string; expedienteId?: string },
+  ) {
+    const { moduloId } = body;
+    await this.minioService.uploadFile(
+      'ctd-documentos',
+      file.filename,
+      file.path,
+    );
+    let modulo: Modulo | undefined = undefined;
+    if (moduloId)
+      modulo =
+        (await this.moduloRepo.findOne({ where: { id: moduloId } })) ??
+        undefined;
+    if (modulo) {
+      const destinoMinio = `${modulo.ruta}/${file.filename}`;
+      await this.minioService.uploadFile(
+        'ctd-expedientes',
+        destinoMinio,
+        file.path,
+      );
+    }
+    const docEntity = this.documentoRepo.create({
+      nombre: file.filename,
+      tipo: DocumentoTipo.PLANTILLA,
+      ruta_archivo: file.path,
+      modulo,
+      mime_type: file.mimetype,
+    });
+    return this.documentoRepo.save(docEntity);
+  }
 
   // Crear un nuevo documento
   async create(createDto: CreateDocumentoDto) {
-    const { modulo_id, subido_por, ...rest } = createDto;
+    const { modulo_id, subido_por, anexos, ...rest } = createDto;
 
     const modulo = await this.moduloRepo.findOne({ where: { id: modulo_id } });
     if (!modulo) throw new NotFoundException('Módulo no encontrado.');
 
-    let user: User | null = null;
+    let user: User | undefined = undefined;
     if (subido_por) {
-      user = await this.userRepo.findOne({ where: { id: subido_por } });
-      if (!user) throw new NotFoundException('Usuario no encontrado.');
+      const foundUser = await this.userRepo.findOne({
+        where: { id: subido_por },
+      });
+      if (!foundUser) throw new NotFoundException('Usuario no encontrado.');
+      user = foundUser;
+    }
+
+    // Buscar anexos si se pasan
+    let anexosDocs: Documento[] = [];
+    if (anexos && anexos.length > 0) {
+      anexosDocs = await this.documentoRepo.findByIds(anexos);
     }
 
     const documento = this.documentoRepo.create({
@@ -43,7 +631,44 @@ export class DocumentosService {
       version: rest.version || 1,
       modulo,
       subido_por: user || undefined,
+      anexos: anexosDocs,
     });
+
+    // Si es Word y hay anexos, agregar referencias en el contenido
+    if (
+      rest.mime_type &&
+      rest.mime_type.includes('word') &&
+      anexosDocs.length > 0 &&
+      rest.ruta_archivo
+    ) {
+      const docx = require('docx');
+      const fs = require('fs');
+      const buffer = fs.readFileSync(rest.ruta_archivo);
+      // No hay edición directa, así que se crea uno nuevo con el contenido original + referencias
+      const doc = new docx.Document({
+        sections: [
+          {
+            children: [
+              new docx.Paragraph({
+                text: rest.nombre,
+                heading: docx.HeadingLevel.TITLE,
+              }),
+              new docx.Paragraph({ text: 'Contenido original...' }),
+              ...anexosDocs.map(
+                (a) => new docx.Paragraph({ text: `Ver ${a.nombre}` }),
+              ),
+            ],
+          },
+        ],
+      });
+      const newBuffer = await docx.Packer.toBuffer(doc);
+      fs.writeFileSync(rest.ruta_archivo, newBuffer);
+      await this.minioService.uploadFile(
+        'ctd-documentos',
+        rest.nombre,
+        rest.ruta_archivo,
+      );
+    }
 
     const saved = await this.documentoRepo.save(documento);
 
@@ -56,6 +681,18 @@ export class DocumentosService {
       comentario: 'Documento creado automáticamente.',
     });
 
+    // Subir archivo a MinIO si hay ruta de archivo
+    if (saved.ruta_archivo && saved.nombre) {
+      try {
+        await this.minioService.uploadFile(
+          'ctd-documentos',
+          saved.nombre,
+          saved.ruta_archivo,
+        );
+      } catch (e) {
+        // Manejar error de subida a MinIO (opcional: log)
+      }
+    }
     return saved;
   }
 
@@ -86,6 +723,19 @@ export class DocumentosService {
 
     const updated = await this.documentoRepo.save(documento);
 
+    // Subir archivo actualizado a MinIO si hay ruta de archivo
+    if (updated.ruta_archivo && updated.nombre) {
+      try {
+        await this.minioService.uploadFile(
+          'ctd-documentos',
+          updated.nombre,
+          updated.ruta_archivo,
+        );
+      } catch (e) {
+        // Manejar error de subida a MinIO (opcional: log)
+      }
+    }
+
     // ✅ Registrar historial automático
     await this.historialService.create({
       documento_id: updated.id,
@@ -102,7 +752,12 @@ export class DocumentosService {
   async remove(id: string) {
     const documento = await this.documentoRepo.findOne({ where: { id } });
     if (!documento) throw new NotFoundException('Documento no encontrado.');
-
+    // Eliminar de MinIO si existe
+    try {
+      await this.minioService.removeObject('ctd-documentos', documento.nombre);
+    } catch (e) {
+      // Si no existe en MinIO, continuar
+    }
     await this.documentoRepo.remove(documento);
 
     // ✅ Registrar historial automático
@@ -111,7 +766,7 @@ export class DocumentosService {
       version: documento.version,
       accion: HistorialAccion.ELIMINADO,
       usuario_id: documento.subido_por?.id,
-      comentario: 'Documento eliminado del sistema.',
+      comentario: 'Documento eliminado del sistema y de MinIO.',
     });
 
     return { message: 'Documento eliminado correctamente.' };

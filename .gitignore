@@ -5,6 +5,8 @@
 
 # uploads
 /uploads
+# exports
+/exports
 # Logs
 logs
 *.log

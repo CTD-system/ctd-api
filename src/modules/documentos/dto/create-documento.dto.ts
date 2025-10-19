@@ -33,4 +33,7 @@ export class CreateDocumentoDto {
   @IsOptional()
   @IsUUID()
   plantilla_id?: string;
+
+  @IsOptional()
+  anexos?: string[];
 }

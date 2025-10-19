@@ -1,3 +1,4 @@
+
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -8,6 +9,13 @@ import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class UsersService {
+  // Validar usuario y contraseña para login
+  async validateUser(username: string, password: string): Promise<User | null> {
+    const user = await this.userRepo.findOne({ where: { username } });
+    if (!user) return null;
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    return isMatch ? user : null;
+  }
 
   constructor(
     @InjectRepository(User)

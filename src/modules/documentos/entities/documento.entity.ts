@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, OneToMany } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, OneToMany, ManyToMany, JoinTable } from 'typeorm';
 import { Modulo } from '../../modulos/entities/modulo.entity';
 import { User } from '../../users/entities/user.entity';
 import { HistorialDocumento } from '../../historial/entities/historial_documento.entity';
@@ -44,4 +44,9 @@ export class Documento {
 
   @OneToMany(() => HistorialDocumento, historial => historial.documento)
   historial: HistorialDocumento[];
+
+  // Relación de anexos
+  @ManyToMany(() => Documento)
+  @JoinTable({ name: 'documento_anexos' })
+  anexos?: Documento[];
 }

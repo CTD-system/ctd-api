@@ -16,6 +16,12 @@ export class Modulo {
   @ManyToOne(() => Expediente, expediente => expediente.modulos)
   expediente: Expediente;
 
+    @ManyToOne(() => Modulo, modulo => modulo.submodulos, { nullable: true })
+  moduloContenedor?: Modulo;
+
+  @OneToMany(() => Modulo, modulo => modulo.moduloContenedor)
+  submodulos: Modulo[];
+
   @Column()
   numero: number;
 
@@ -36,4 +42,21 @@ export class Modulo {
 
   @OneToMany(() => Documento, documento => documento.modulo)
   documentos: Documento[];
+
+  // Archivo Word de índice
+  @Column({ nullable: true })
+  indice_word_nombre?: string;
+
+  @Column({ nullable: true })
+  indice_word_ruta?: string;
+
+   @Column({ length: 255, nullable: false })
+  ruta: string;
+
+  // Archivo Word de referencias bibliográficas
+  @Column({ nullable: true })
+  referencias_word_nombre?: string;
+
+  @Column({ nullable: true })
+  referencias_word_ruta?: string;
 }
