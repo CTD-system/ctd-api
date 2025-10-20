@@ -198,26 +198,68 @@ export class ExpedientesService {
   }
 
   async eliminarEnCascada(id: string) {
-    const expediente = await this.expedienteRepo.findOne({
-      where: { id },
-      relations: ['modulos', 'modulos.documentos'],
-    });
-    if (!expediente) throw new Error('Expediente no encontrado');
+  const expediente = await this.expedienteRepo.findOne({
+    where: { id },
+    relations: [
+      'modulos',
+      'modulos.submodulos',
+      'modulos.submodulos.documentos',
+      'modulos.documentos',
+    ],
+  });
 
-    await this.minioService.removeFolder(
-      'ctd-expedientes',
-      `expedientes/${expediente.codigo}/`,
-    );
+  if (!expediente) throw new Error('Expediente no encontrado');
 
-    for (const modulo of expediente.modulos) {
-      for (const documento of modulo.documentos) {
-        await this.documentoRepo.remove(documento);
-      }
-      await this.moduloRepo.remove(modulo);
+  // 🧹 1. Eliminar carpeta completa en MinIO
+  await this.minioService.removeFolder(
+    'ctd-expedientes',
+    `expedientes/${expediente.codigo}/`,
+  );
+
+  // 🧩 2. Función recursiva para eliminar módulos y submódulos
+  const eliminarModuloRecursivo = async (modulo: Modulo) => {
+  // 🔍 Re-cargar el módulo con todos sus submódulos y documentos
+  const moduloCompleto = await this.moduloRepo.findOne({
+    where: { id: modulo.id },
+    relations: ['submodulos', 'documentos'],
+  });
+
+  if (!moduloCompleto) return;
+
+  // 🧩 Eliminar recursivamente submódulos
+  if (moduloCompleto.submodulos && moduloCompleto.submodulos.length > 0) {
+    for (const sub of moduloCompleto.submodulos) {
+      await eliminarModuloRecursivo(sub);
     }
-    await this.expedienteRepo.remove(expediente);
-    return {
-      message: 'Expediente y sus módulos/documentos eliminados en cascada.',
-    };
   }
+
+  // 🗎 Eliminar documentos asociados
+  if (moduloCompleto.documentos && moduloCompleto.documentos.length > 0) {
+    for (const documento of moduloCompleto.documentos) {
+      try {
+        await this.minioService.removeObject('ctd-expedientes', documento.ruta_archivo);
+      } catch {}
+      await this.documentoRepo.remove(documento);
+    }
+  }
+
+  // 🧹 Finalmente eliminar el módulo actual
+  await this.moduloRepo.remove(moduloCompleto);
+};
+
+
+  // 🧱 3. Eliminar todos los módulos raíz del expediente
+  for (const modulo of expediente.modulos) {
+    await eliminarModuloRecursivo(modulo);
+  }
+
+  // 🗑️ 4. Eliminar el expediente en sí
+  await this.expedienteRepo.remove(expediente);
+
+  return {
+    message: 'Expediente, módulos y documentos eliminados en cascada correctamente.',
+  };
+}
+
+
 }

@@ -37,6 +37,15 @@ export class MinioService {
     const key = folderPath.endsWith('/') ? folderPath : `${folderPath}/`;
     return this.minioClient.putObject(bucket, key, emptyBuffer);
   }
+
+  async listFilesByPrefix(bucket: string, prefix: string) {
+  const files : string[] = [];
+  const stream = this.minioClient.listObjectsV2(bucket, prefix, true);
+  for await (const obj of stream) {
+    if (obj.name) files.push(obj.name);
+  }
+  return files;
+}
   
 
   async removeFolder(bucket: string, prefix: string) {
@@ -48,8 +57,11 @@ export class MinioService {
     }
 
     if (objects.length > 0) {
+       this.logger.log(`Eliminando ${objects.length} archivos del módulo en ${bucket}`);
       await this.minioClient.removeObjects(bucket, objects);
-    }
+    } else {
+    this.logger.log(`No se encontraron objetos para eliminar con prefijo: ${prefix}`);
+  }
   }
 
   

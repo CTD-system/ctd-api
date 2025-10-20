@@ -29,6 +29,7 @@ import { User } from '../users/entities/user.entity';
 import { HistorialService } from '../historial/historial.service';
 import { HistorialAccion } from '../historial/entities/historial_documento.entity';
 import * as fs from 'fs';
+import { ModulosService } from '../modulos/modulos.service';
 
 @Injectable()
 export class DocumentosService {
@@ -44,6 +45,7 @@ export class DocumentosService {
 
     private readonly historialService: HistorialService, // ✅ inyección del historial
     private readonly minioService: MinioService,
+    private readonly modulosService: ModulosService,
   ) {}
 
   // Crear documento Word con índice y capítulos
@@ -123,8 +125,16 @@ export class DocumentosService {
     let modulo: Modulo | undefined = undefined;
     if (moduloId)
       modulo =
-        (await this.moduloRepo.findOne({ where: { id: moduloId } })) ??
-        undefined;
+        (await this.moduloRepo.findOne({
+          where: { id: moduloId },
+          relations: [
+            'expediente',
+            'documentos',
+            'submodulos',
+            'submodulos.documentos',
+            'moduloContenedor',
+          ],
+        })) ?? undefined;
 
     let anexosDocs: Documento[] = [];
     if (anexos && anexos.length > 0) {
@@ -397,7 +407,6 @@ export class DocumentosService {
 
     console.log(`📄 Total párrafos generados: ${children.length}`);
 
-
     // --- Crear documento ---
     const doc = new Document({
       sections: [
@@ -426,14 +435,16 @@ export class DocumentosService {
 
     // --- Asociar a módulo si corresponde ---
 
-    if (modulo) {
-      const destinoMinio = `${modulo.ruta}/${fileName}`;
-      await this.minioService.uploadFile(
-        'ctd-expedientes',
-        destinoMinio,
-        filePath,
-      );
-    }
+    const destinoMinio = modulo
+      ? `${modulo.ruta}/${fileName}`
+      : `documentos/${fileName}`;
+
+    await this.minioService.uploadFile(
+      'ctd-expedientes',
+      destinoMinio,
+      filePath,
+    );
+
 
     const subidoPorUser = subido_por
       ? await this.userRepo.findOne({ where: { id: subido_por } })
@@ -442,7 +453,7 @@ export class DocumentosService {
     const docEntity = this.documentoRepo.create({
       nombre: fileName,
       tipo: DocumentoTipo.PLANTILLA,
-      ruta_archivo: filePath,
+      ruta_archivo: destinoMinio,
       modulo,
       version: 1,
       mime_type:
@@ -451,7 +462,14 @@ export class DocumentosService {
       anexos: anexosDocs,
     });
 
-    return this.documentoRepo.save(docEntity);
+    return (
+      this.documentoRepo.save(docEntity),
+      modulo?.moduloContenedor
+        ? this.modulosService.actualizarIndiceModulo(
+            modulo?.moduloContenedor.id,
+          )
+        : null
+    );
   }
 
   // Editar documento Word (agrega contenido/capítulos)
@@ -488,6 +506,7 @@ export class DocumentosService {
       docEntity.nombre,
       docEntity.ruta_archivo,
     );
+
     return { message: 'Documento Word editado y subido a MinIO.' };
   }
 
@@ -641,6 +660,9 @@ export class DocumentosService {
       anexosDocs.length > 0 &&
       rest.ruta_archivo
     ) {
+      const destinoMinio = modulo
+        ? `${modulo.ruta}/${rest.nombre}`
+        : `documentos/${rest.nombre}`;
       const docx = require('docx');
       const fs = require('fs');
       const buffer = fs.readFileSync(rest.ruta_archivo);
@@ -664,10 +686,11 @@ export class DocumentosService {
       const newBuffer = await docx.Packer.toBuffer(doc);
       fs.writeFileSync(rest.ruta_archivo, newBuffer);
       await this.minioService.uploadFile(
-        'ctd-documentos',
-        rest.nombre,
+        'ctd-expedientes',
+        destinoMinio,
         rest.ruta_archivo,
       );
+      documento.ruta_archivo = destinoMinio; // ✅ reemplaza la local
     }
 
     const saved = await this.documentoRepo.save(documento);
@@ -693,6 +716,7 @@ export class DocumentosService {
         // Manejar error de subida a MinIO (opcional: log)
       }
     }
+
     return saved;
   }
 

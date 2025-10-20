@@ -16,11 +16,13 @@ import { MinioService } from '../minio.service';
 import * as path from 'path';
 import * as fs from 'fs';
 import express  from 'express';
-
+import { ExportService } from './export.service';
 @ApiTags('MinIO - Descarga directa')
 @Controller('minio-download')
 export class MinioDownloadController {
-  constructor(private readonly minioService: MinioService) {}
+  constructor(private readonly minioService: MinioService,
+    private readonly exportService: ExportService
+  ) {}
 
   // 📦 Descargar expediente ZIP desde MinIO
   @Get('expediente/:filename')
@@ -55,6 +57,18 @@ export class MinioDownloadController {
     }
     return this.descargarDesdeMinio('ctd-imports', filename, res);
   }
+
+  @Get('expediente-zip/:expedienteId')
+  @ApiOperation({ summary: 'Descargar todo un expediente (carpeta completa) como ZIP desde MinIO' })
+  @ApiParam({ name: 'expedienteId', example: 'c7971cae-9127-4ee1-99e6-8aec031a08d6' })
+  async descargarExpedienteCompleto(
+    @Param('expedienteId') expedienteId: string,
+    @Res() res: express.Response,
+  ) {
+    return this.exportService.descargarExpedienteCompleto(expedienteId, res);
+  }
+
+  
 
   /**
    * Método reutilizable para descargar un archivo desde MinIO y enviarlo al cliente.

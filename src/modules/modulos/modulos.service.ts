@@ -29,6 +29,75 @@ export class ModulosService {
     private readonly minioService: MinioService,
   ) {}
 
+  async actualizarIndiceModulo(moduloId: string) {
+    const modulo = await this.moduloRepo.findOne({
+      where: { id: moduloId },
+      relations: ['documentos', 'submodulos', 'submodulos.documentos','moduloContenedor'],
+    });
+    if (!modulo) throw new NotFoundException('Módulo no encontrado');
+
+    // 1️⃣ Generar nuevo contenido de índice
+    const submodulos = await this.moduloRepo.find({
+      where: { moduloContenedor: { id: modulo.id } },
+      relations: ['documentos','submodulos', 'submodulos.documentos','moduloContenedor'],
+    });
+
+    console.log(submodulos);
+    console.log(submodulos.map((s)=> s.documentos));
+
+    const capitulos: string[] = [];
+    for (const sub of submodulos) {
+      capitulos.push(`Submódulo: ${sub.titulo}`);
+      for (const doc of sub.documentos) {
+        capitulos.push(`- Documento: ${doc.nombre || doc.id}`);
+      }
+    }
+
+    const doc = new Document({
+      sections: [
+        {
+          children: [
+            new Paragraph({
+              text: `Índice de Módulo ${modulo.titulo}`,
+              heading: HeadingLevel.TITLE,
+            }),
+            ...capitulos.map(
+              (c) =>
+                new Paragraph({ text: c, heading: HeadingLevel.HEADING_2 }),
+            ),
+          ],
+        },
+      ],
+    });
+    if (!modulo.indice_word_nombre) {
+      
+      modulo.indice_word_nombre = `indice_modulo_${modulo.titulo}.docx`;
+    }
+
+    
+      modulo.indice_word_ruta = `${modulo.ruta}/${modulo.indice_word_nombre}`;
+    
+
+    
+
+    // 2️⃣ Sobrescribir el archivo existente
+    const filePath = path.join(
+      process.cwd(),
+      'uploads',
+      modulo.indice_word_nombre,
+    );
+    fs.writeFileSync(filePath, await Packer.toBuffer(doc));
+
+    await this.minioService.uploadFile(
+      'ctd-expedientes',
+      modulo.indice_word_ruta, // misma ruta en MinIO
+      filePath,
+    );
+    console.log("Indice ACTUALIZADO");
+    
+    return { message: 'Índice actualizado correctamente' };
+  }
+
   // Crear módulo
   async create(createDto: CreateModuloDto) {
     const {
@@ -88,7 +157,7 @@ export class ModulosService {
     if (crearIndiceWord) {
       // Obtener submódulos y documentos del expediente
       const submodulos = await this.moduloRepo.find({
-        where: { expediente: { id: expediente_id } },
+        where: { moduloContenedor: { id: modulo.id } },
         relations: ['documentos'],
       });
       let capitulos: string[] = [];
@@ -106,7 +175,7 @@ export class ModulosService {
           {
             children: [
               new Paragraph({
-                text: `Índice de Módulo ${numero}`,
+                text: `Índice de Módulo ${titulo || numero}`,
                 heading: HeadingLevel.TITLE,
               }),
               ...capitulos.map(
@@ -117,7 +186,7 @@ export class ModulosService {
           },
         ],
       });
-      const fileName = `indice_modulo_${numero}.docx`;
+      const fileName = `indice_modulo_${titulo}.docx`;
       const filePath = path.join(process.cwd(), 'uploads', fileName);
       if (!fs.existsSync(path.dirname(filePath)))
         fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -127,7 +196,11 @@ export class ModulosService {
       modulo.indice_word_ruta = filePath;
       // Subir a MinIO
       try {
-        await this.minioService.uploadFile('ctd-modulos', fileName, filePath);
+        await this.minioService.uploadFile(
+          'ctd-expedientes',
+          `${modulo.ruta}/${fileName}`,
+          filePath,
+        );
       } catch (e) {
         // Manejar error de subida a MinIO
       }
@@ -147,30 +220,35 @@ export class ModulosService {
           },
         ],
       });
-      const fileName = `referencias_modulo_${numero}.docx`;
+      const fileName = `referencias_modulo_${titulo}.docx`;
       const filePath = path.join(process.cwd(), 'uploads', fileName);
-      if (!fs.existsSync(path.dirname(filePath)))
-        fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      const buffer = await Packer.toBuffer(doc);
-      fs.writeFileSync(filePath, buffer);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, await Packer.toBuffer(doc));
       modulo.referencias_word_nombre = fileName;
       modulo.referencias_word_ruta = filePath;
       // Subir a MinIO
       try {
-        await this.minioService.uploadFile('ctd-modulos', fileName, filePath);
+        await this.minioService.uploadFile(
+          'ctd-expedientes',
+          `${modulo.ruta}/${fileName}`,
+          filePath,
+        );
       } catch (e) {
         // Manejar error de subida a MinIO
       }
     }
-
-    const saved = await this.moduloRepo.save(modulo);
-    return saved;
+    if (modulo.moduloContenedor && modulo.moduloContenedor.indice_word_nombre) {
+      console.log("Se va actualizar el indice");
+      
+      await this.actualizarIndiceModulo(modulo.moduloContenedor.id);
+    }
+    return await this.moduloRepo.save(modulo);
   }
 
   // Listar todos los módulos
   async findAll() {
     const modulos = await this.moduloRepo.find({
-      relations: ['expediente', 'documentos'],
+      relations: ['expediente', 'documentos','moduloContenedor'],
       order: { numero: 'ASC' },
     });
     return { total: modulos.length, modulos };
@@ -180,7 +258,7 @@ export class ModulosService {
   async findOne(id: string) {
     const modulo = await this.moduloRepo.findOne({
       where: { id },
-      relations: ['expediente', 'documentos'],
+      relations: ['expediente', 'documentos','submodulos', 'submodulos.documentos','moduloContenedor'],
     });
 
     if (!modulo) throw new NotFoundException('Módulo no encontrado.');
@@ -218,10 +296,16 @@ export class ModulosService {
   // Editar el archivo Word de referencias bibliográficas de un módulo
   async editarReferenciasWord(moduloId: string, referencias: string[]) {
     const modulo = await this.moduloRepo.findOne({ where: { id: moduloId } });
-    if (!modulo || !modulo.referencias_word_ruta)
-      throw new NotFoundException(
-        'Módulo o archivo de referencias no encontrado',
-      );
+    if (!modulo) throw new NotFoundException('Módulo no encontrado.');
+    if (!modulo.referencias_word_nombre) {
+      const safeTitulo =
+        modulo.titulo?.replace(/\s+/g, '_') || modulo.numero || 'modulo';
+      modulo.referencias_word_nombre = `referencias_${safeTitulo}.docx`;
+    }
+
+    if (!modulo.referencias_word_ruta) {
+      modulo.referencias_word_ruta = `${modulo.ruta}/${modulo.referencias_word_nombre}`;
+    }
     const doc = new Document({
       sections: [
         {
@@ -238,17 +322,19 @@ export class ModulosService {
         },
       ],
     });
-    const buffer = await Packer.toBuffer(doc);
-    fs.writeFileSync(modulo.referencias_word_ruta, buffer);
-    if (modulo.referencias_word_nombre && modulo.referencias_word_ruta) {
-      await this.minioService.uploadFile(
-        'ctd-modulos',
-        modulo.referencias_word_nombre,
-        modulo.referencias_word_ruta,
-      );
-    } else {
-      throw new Error('Nombre o ruta del archivo de referencias no definido.');
-    }
+    const filePath = path.join(
+      process.cwd(),
+      'uploads',
+      modulo.referencias_word_nombre,
+    );
+    fs.writeFileSync(filePath, await Packer.toBuffer(doc));
+
+    await this.minioService.uploadFile(
+      'ctd-expedientes',
+      modulo.referencias_word_ruta,
+      filePath,
+    );
+
     return {
       message: 'Referencias bibliográficas actualizadas y subidas a MinIO.',
     };
@@ -258,36 +344,89 @@ export class ModulosService {
     const modulo = await this.moduloRepo.findOne({ where: { id } });
     if (!modulo) throw new NotFoundException('Módulo no encontrado.');
 
-    // Eliminar archivo de MinIO si existe
-    if ((modulo as any).archivo_nombre) {
-      try {
-        await this.minioService.removeObject(
-          'ctd-modulos',
-          (modulo as any).archivo_nombre,
-        );
-      } catch (e) {
-        // Manejar error de borrado en MinIO
+    // Eliminar todo el módulo en MinIO
+    try {
+      if (modulo.ruta) {
+        await this.minioService.removeFolder('ctd-expedientes', modulo.ruta);
       }
+    } catch (e) {
+      console.error('Error eliminando archivos del módulo en MinIO:', e);
     }
+
     await this.moduloRepo.remove(modulo);
-    return { message: `Módulo ${modulo.titulo} eliminado correctamente.` };
+    return { message: `Módulo "${modulo.titulo}" eliminado correctamente.` };
   }
 
   // Asignar documento a módulo
   async asignarDocumento(moduloId: string, documentoId: string) {
+    // 🔹 1. Buscar módulo con sus documentos
     const modulo = await this.moduloRepo.findOne({
       where: { id: moduloId },
-      relations: ['documentos'],
+      relations: ['expediente', 'documentos','submodulos', 'submodulos.documentos','moduloContenedor'],
     });
-    if (!modulo) throw new Error('Módulo no encontrado');
+    if (!modulo) throw new NotFoundException('Módulo no encontrado.');
+
+    // 🔹 2. Buscar documento
     const documento = await this.documentoRepo.findOne({
       where: { id: documentoId },
     });
-    if (!documento) throw new Error('Documento no encontrado');
-    documento.modulo = modulo;
-    await this.documentoRepo.save(documento);
-    return {
-      message: `Documento asignado al módulo "${modulo.titulo}" correctamente.`,
-    };
+    if (!documento) throw new NotFoundException('Documento no encontrado.');
+
+    // 🔹 3. Verificar que el documento tenga una ruta y nombre de archivo
+    if (!documento.nombre || !documento.ruta_archivo) {
+      throw new BadRequestException(
+        'El documento no tiene archivo asociado en MinIO.',
+      );
+    }
+
+    // 🔹 4. Construir nuevas rutas en MinIO dentro del módulo
+    const bucket = 'ctd-expedientes';
+    const nombreArchivo = documento.nombre;
+    const nuevaRuta = `${modulo.ruta}/${nombreArchivo}`.replace(/\\/g, '/');
+
+    const rutaOrigen = documento.ruta_archivo;
+
+    console.log(rutaOrigen);
+
+    try {
+      // === MOVER ARCHIVO EN MINIO ===
+      // Descargar el archivo temporalmente
+      const tempDir = path.join(process.cwd(), 'temp');
+      fs.mkdirSync(tempDir, { recursive: true });
+      const tempPath = path.join(tempDir, nombreArchivo);
+
+      await this.minioService.downloadFile(bucket, rutaOrigen, tempPath);
+
+      // Subirlo a la nueva ruta (dentro del módulo)
+      await this.minioService.uploadFile(bucket, nuevaRuta, tempPath);
+
+      // Eliminar la copia anterior
+      await this.minioService.removeObject(bucket, rutaOrigen);
+
+      // Eliminar el archivo temporal local
+      fs.unlinkSync(tempPath);
+
+      // 🔹 5. Actualizar los campos en la BD
+      documento.ruta_archivo = nuevaRuta;
+      documento.modulo = modulo;
+
+      await this.documentoRepo.save(documento);
+
+      if (modulo.moduloContenedor && modulo.moduloContenedor.indice_word_nombre) {
+        console.log('Actualizando Indice del modulo contenedor');
+        
+        await this.actualizarIndiceModulo(modulo.moduloContenedor.id);
+      }
+
+      return {
+        message: `📂 Documento "${nombreArchivo}" movido y asignado al módulo "${modulo.titulo}" correctamente.`,
+        nuevaRuta,
+      };
+    } catch (error) {
+      console.error('❌ Error al mover el documento en MinIO:', error);
+      throw new BadRequestException(
+        'Error al mover el documento dentro del módulo en MinIO.',
+      );
+    }
   }
 }
