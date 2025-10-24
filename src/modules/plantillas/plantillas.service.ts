@@ -1,117 +1,107 @@
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { CreatePlantillaDto } from './dto/create-plantilla.dto';
-import { UpdatePlantillaDto } from './dto/update-plantilla.dto';
 import { Plantilla } from './entities/plantilla.entity';
 import { User } from '../users/entities/user.entity';
+import { PlantillaDTO } from './dto/create-plantilla.dto';
+import { UpdatePlantillaDto } from './dto/update-plantilla.dto';
 
 @Injectable()
 export class PlantillasService {
   constructor(
     @InjectRepository(Plantilla)
-    private readonly plantillaRepo: Repository<Plantilla>,
-
+    private readonly plantillaRepository: Repository<Plantilla>,
     @InjectRepository(User)
-    private readonly userRepo: Repository<User>,
+    private readonly userRepository: Repository<User>,
   ) {}
 
-  /**
-   * Crea una nueva plantilla de documento Word
-   */
-  async create(createPlantillaDto: CreatePlantillaDto) {
-    try {
-      const {
-        creado_por,
-        nombre,
-        descripcion,
-        tipo_archivo,
-        ruta_archivo,
-        ...configuracionWord
-      } = createPlantillaDto;
+  // Crear una nueva plantilla
+  async create(
+    createPlantillaDTO: PlantillaDTO,
+    userId: string,
+  ): Promise<PlantillaDTO> {
+    const { ...plantillaData } = createPlantillaDTO;
 
-      let creador: User | undefined|null = undefined;
-      if (creado_por) {
-        creador = await this.userRepo.findOne({ where: { id: creado_por } });
-        if (!creador)
-          throw new NotFoundException(`Usuario con id ${creado_por} no existe`);
-      }
-
-      const plantilla = this.plantillaRepo.create({
-        nombre,
-        descripcion,
-        tipo_archivo,
-        ruta_archivo,
-        creado_por: creador,
-        ...configuracionWord,
-      });
-
-      return await this.plantillaRepo.save(plantilla);
-    } catch (error) {
-      throw new BadRequestException(`Error al crear plantilla: ${error.message}`);
+    // Verificar si el usuario existe
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
     }
-  }
 
-  /**
-   * Obtiene todas las plantillas
-   */
-  async findAll() {
-    return await this.plantillaRepo.find({
-      relations: ['creado_por'],
-      order: { creado_en: 'DESC' },
+    const plantilla = this.plantillaRepository.create({
+      ...plantillaData,
+      creado_por: user,
     });
+
+    await this.plantillaRepository.save(plantilla);
+    return this.toDTO(plantilla);
   }
 
-  /**
-   * Obtiene una plantilla por su UUID
-   */
-  async findOne(id: string) {
-    const plantilla = await this.plantillaRepo.findOne({
+  // Obtener todas las plantillas
+  async findAll(): Promise<PlantillaDTO[]> {
+    const plantillas = await this.plantillaRepository.find({
+      relations: ['creado_por'],
+    });
+    return plantillas.map((plantilla) => this.toDTO(plantilla));
+  }
+
+  // Obtener una plantilla por su ID
+  async findOne(id: string): Promise<PlantillaDTO> {
+    const plantilla = await this.plantillaRepository.findOne({
       where: { id },
       relations: ['creado_por'],
     });
 
-    if (!plantilla)
-      throw new NotFoundException(`No se encontró la plantilla con id ${id}`);
-
-    return plantilla;
-  }
-
-  /**
-   * Actualiza parcialmente una plantilla
-   */
-  async update(id: string, updatePlantillaDto: UpdatePlantillaDto) {
-    const plantilla = await this.findOne(id);
-
-    if (!plantilla)
-      throw new NotFoundException(`No existe la plantilla con id ${id}`);
-
-    // Si viene un usuario nuevo, lo buscamos
-    if (updatePlantillaDto.creado_por) {
-      const creador = await this.userRepo.findOne({
-        where: { id: updatePlantillaDto.creado_por },
-      });
-      if (!creador)
-        throw new NotFoundException(
-          `Usuario con id ${updatePlantillaDto.creado_por} no existe`,
-        );
-      plantilla.creado_por = creador;
+    if (!plantilla) {
+      throw new NotFoundException(`Plantilla con ID ${id} no encontrada`);
     }
 
-    Object.assign(plantilla, updatePlantillaDto);
-    return await this.plantillaRepo.save(plantilla);
+    return this.toDTO(plantilla);
   }
 
-  /**
-   * Elimina una plantilla
-   */
-  async remove(id: string) {
-    const plantilla = await this.findOne(id);
-    await this.plantillaRepo.remove(plantilla);
-    return { message: `Plantilla ${plantilla.nombre} eliminada correctamente` };
+  // Actualizar una plantilla
+  async update(
+    id: string,
+    updatePlantillaDTO: UpdatePlantillaDto,
+  ): Promise<PlantillaDTO> {
+    const plantilla = await this.plantillaRepository.findOne({
+      where: { id },
+      relations: ['creado_por'],
+    });
+
+    if (!plantilla) {
+      throw new NotFoundException(`Plantilla con ID ${id} no encontrada`);
+    }
+
+    const updatedPlantilla = this.plantillaRepository.merge(
+      plantilla,
+      updatePlantillaDTO,
+    );
+    await this.plantillaRepository.save(updatedPlantilla);
+    return this.toDTO(updatedPlantilla);
+  }
+
+  // Eliminar una plantilla
+  async remove(id: string): Promise<void> {
+    const plantilla = await this.plantillaRepository.findOne({ where: { id } });
+    if (!plantilla) {
+      throw new NotFoundException(`Plantilla con ID ${id} no encontrada`);
+    }
+
+    await this.plantillaRepository.remove(plantilla);
+  }
+
+  // Convertir la entidad a DTO
+  private toDTO(plantilla: Plantilla): PlantillaDTO {
+    const { creado_por, ...plantillaData } = plantilla;
+    return {
+      ...plantillaData,
+      creado_por: {
+        id: creado_por.id,
+        username: creado_por.username,
+        email: creado_por.email,
+        
+      },
+    };
   }
 }

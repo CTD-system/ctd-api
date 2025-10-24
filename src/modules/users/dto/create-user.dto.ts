@@ -2,6 +2,21 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsEmail, IsNotEmpty, IsOptional, IsString, IsIn, IsEnum } from 'class-validator';
 import { UserRole } from '../entities/user.entity';
+import { Exclude, Expose } from 'class-transformer';
+
+
+export class UserDTO {
+  @Expose()
+  id: string;
+
+  @Expose()
+  username: string;
+
+  @Expose()
+  email: string;
+
+  
+}
 export class CreateUserDto {
   @ApiProperty({ example: 'juanperez', description: 'Nombre de usuario único' })
   @IsNotEmpty()

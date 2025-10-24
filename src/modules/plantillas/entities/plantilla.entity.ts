@@ -45,10 +45,7 @@ export class Plantilla {
   @Column('text')
   descripcion: string;
 
-  // 📄 Documento base subido
-  @OneToOne(() => Documento, { onDelete: 'CASCADE', eager: true })
-  @JoinColumn()
-  documento: Documento;
+  
 
   @Column({ nullable: true })
   tipo_archivo: string;
@@ -97,6 +94,8 @@ export class Plantilla {
     titulo?: string;
     bloques: Bloque[];
   };
+
+  
 
   @Column({ type: 'json', nullable: true })
   estilos_detectados?: {

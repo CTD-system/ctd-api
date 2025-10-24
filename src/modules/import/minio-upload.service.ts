@@ -199,7 +199,6 @@ export class MinioUploadService {
         const plantilla = this.plantillaRepo.create({
           nombre: `Plantilla_${nombreLimpio}`,
           descripcion: `Plantilla creada desde ${file.originalname}`,
-          documento: savedDoc,
           tipo_archivo: file.mimetype,
           ruta_archivo: filePath,
           creado_por: creado_por ? ({ id: creado_por } as any) : undefined,

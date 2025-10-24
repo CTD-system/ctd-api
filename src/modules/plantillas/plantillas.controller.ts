@@ -1,97 +1,94 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Patch,
-  Param,
-  Delete,
-} from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Delete, Put, Query, NotFoundException } from '@nestjs/common';
 import { PlantillasService } from './plantillas.service';
-import { CreatePlantillaDto } from './dto/create-plantilla.dto';
+import { PlantillaDTO } from './dto/create-plantilla.dto';
 import { UpdatePlantillaDto } from './dto/update-plantilla.dto';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBody,
-  ApiParam,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { User } from '../users/entities/user.entity'; // Asegúrate de que esta entidad esté bien importada
+import { CurrentUser } from 'src/decorators/current-user.decorator';
 
-@ApiTags('Plantillas') // Agrupa las rutas en Swagger
+@ApiTags('Plantillas')
 @Controller('plantillas')
 export class PlantillasController {
   constructor(private readonly plantillasService: PlantillasService) {}
 
-  // ---- CREAR PLANTILLA ----
+  // Crear una plantilla
   @Post()
-  @ApiOperation({
-    summary: 'Crear una nueva plantilla',
-    description:
-      'Crea una plantilla de documento Word con configuración completa (fuente, color, capítulos, etc.)',
-  })
-  @ApiBody({ type: CreatePlantillaDto })
+  @ApiOperation({ summary: 'Crear una nueva plantilla' })
   @ApiResponse({
     status: 201,
     description: 'Plantilla creada correctamente',
+    type: PlantillaDTO,
   })
-  @ApiResponse({
-    status: 400,
-    description: 'Error de validación o datos inválidos',
-  })
-  create(@Body() createPlantillaDto: CreatePlantillaDto) {
-    return this.plantillasService.create(createPlantillaDto);
+  async create(
+    @Body() createPlantillaDTO: PlantillaDTO,
+    @CurrentUser() user: User,  // Usamos el decorador `CurrentUser` para obtener el usuario actual (requiere configuración adicional)
+  ): Promise<PlantillaDTO> {
+    return this.plantillasService.create(createPlantillaDTO, user.id);
   }
 
-  // ---- LISTAR TODAS ----
+  // Obtener todas las plantillas
   @Get()
-  @ApiOperation({
-    summary: 'Listar todas las plantillas',
-    description: 'Devuelve todas las plantillas registradas en el sistema',
+  @ApiOperation({ summary: 'Obtener todas las plantillas' })
+  @ApiResponse({
+    status: 200,
+    description: 'Todas las plantillas obtenidas correctamente',
+    type: [PlantillaDTO],
   })
-  @ApiResponse({ status: 200, description: 'Listado obtenido correctamente' })
-  findAll() {
+  async findAll(): Promise<PlantillaDTO[]> {
     return this.plantillasService.findAll();
   }
 
-  // ---- OBTENER UNA ----
+  // Obtener una plantilla por su ID
   @Get(':id')
-  @ApiOperation({
-    summary: 'Obtener una plantilla por su ID',
-    description: 'Retorna los datos completos de una plantilla por UUID',
+  @ApiOperation({ summary: 'Obtener una plantilla por su ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Plantilla obtenida correctamente',
+    type: PlantillaDTO,
   })
-  @ApiParam({ name: 'id', description: 'UUID de la plantilla', type: 'string' })
-  @ApiResponse({ status: 200, description: 'Plantilla encontrada' })
-  @ApiResponse({ status: 404, description: 'Plantilla no encontrada' })
-  findOne(@Param('id') id: string) {
-    return this.plantillasService.findOne(id);
+  @ApiResponse({
+    status: 404,
+    description: 'Plantilla no encontrada',
+  })
+  async findOne(@Param('id') id: string): Promise<PlantillaDTO> {
+    try {
+      return await this.plantillasService.findOne(id);
+    } catch (error) {
+      throw new NotFoundException(`Plantilla con ID ${id} no encontrada`);
+    }
   }
 
-  // ---- ACTUALIZAR ----
-  @Patch(':id')
-  @ApiOperation({
-    summary: 'Actualizar una plantilla',
-    description:
-      'Permite modificar los metadatos o configuración de una plantilla existente',
+  // Actualizar una plantilla
+  @Put(':id')
+  @ApiOperation({ summary: 'Actualizar una plantilla existente' })
+  @ApiResponse({
+    status: 200,
+    description: 'Plantilla actualizada correctamente',
+    type: PlantillaDTO,
   })
-  @ApiParam({ name: 'id', description: 'UUID de la plantilla', type: 'string' })
-  @ApiBody({ type: UpdatePlantillaDto })
-  @ApiResponse({ status: 200, description: 'Plantilla actualizada' })
-  @ApiResponse({ status: 404, description: 'Plantilla no encontrada' })
-  update(@Param('id') id: string, @Body() updatePlantillaDto: UpdatePlantillaDto) {
-    return this.plantillasService.update(id, updatePlantillaDto);
+  @ApiResponse({
+    status: 404,
+    description: 'Plantilla no encontrada',
+  })
+  async update(
+    @Param('id') id: string,
+    @Body() updatePlantillaDTO: UpdatePlantillaDto,
+  ): Promise<PlantillaDTO> {
+    return this.plantillasService.update(id, updatePlantillaDTO);
   }
 
-  // ---- ELIMINAR ----
+  // Eliminar una plantilla
   @Delete(':id')
-  @ApiOperation({
-    summary: 'Eliminar una plantilla',
-    description: 'Elimina permanentemente una plantilla por UUID',
+  @ApiOperation({ summary: 'Eliminar una plantilla' })
+  @ApiResponse({
+    status: 204,
+    description: 'Plantilla eliminada correctamente',
   })
-  @ApiParam({ name: 'id', description: 'UUID de la plantilla', type: 'string' })
-  @ApiResponse({ status: 200, description: 'Plantilla eliminada correctamente' })
-  @ApiResponse({ status: 404, description: 'Plantilla no encontrada' })
-  remove(@Param('id') id: string) {
-    return this.plantillasService.remove(id);
+  @ApiResponse({
+    status: 404,
+    description: 'Plantilla no encontrada',
+  })
+  async remove(@Param('id') id: string): Promise<void> {
+    await this.plantillasService.remove(id);
   }
 }

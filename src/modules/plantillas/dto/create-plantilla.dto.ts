@@ -1,104 +1,58 @@
-import {
-  IsNotEmpty,
-  IsOptional,
-  IsString,
-  IsUUID,
-  IsBoolean,
-  IsInt,
-  IsArray,
-  ValidateNested,
-  IsObject,
-  IsHexColor,
-} from 'class-validator';
+import { IsString, IsOptional, IsUUID, IsBoolean, IsArray, IsNumber, IsDate, IsNotEmpty, ValidateNested, IsObject } from 'class-validator';
 import { Type } from 'class-transformer';
+import { User } from 'src/modules/users/entities/user.entity';
+import { UserDTO } from 'src/modules/users/dto/create-user.dto';
 
-// ---- Subestructuras auxiliares ----
+type BloqueDTO =
+  | {
+      tipo: 'capitulo' | 'subcapitulo';
+      titulo: string;
+      bloques?: BloqueDTO[];
+    }
+  | {
+      tipo: 'parrafo';
+      texto: string;
+    }
+  | {
+      tipo: 'tabla';
+      encabezados: string[];
+      filas: string[][];
+    }
+  | {
+      tipo: 'imagen';
+      src: string;
+      alt?: string;
+    }
+  | {
+      tipo: 'placeholder';
+      clave: string;
+      descripcion?: string;
+    };
 
-// Definición de una tabla (encabezados + filas)
-class TablaDto {
-  @IsArray()
-  @IsString({ each: true })
-  encabezados: string[];
+export class PlantillaDTO {
+  @IsUUID()
+  id: string;
 
-  @IsArray()
-  @IsArray({ each: true })
-  filas: string[][];
-}
-
-// Definición de un subcapítulo
-class SubCapituloDto {
+  @IsString()
   @IsNotEmpty()
-  @IsString()
-  titulo: string;
-
-  @IsOptional()
-  @IsString()
-  contenido?: string;
-
-  @IsOptional()
-  @ValidateNested({ each: true })
-  @Type(() => TablaDto)
-  tablas?: TablaDto[];
-
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  anexos?: string[];
-}
-
-// Definición de un capítulo principal
-class CapituloDto {
-  @IsNotEmpty()
-  @IsString()
-  titulo: string;
-
-  @IsOptional()
-  @IsString()
-  contenido?: string;
-
-  @IsOptional()
-  @ValidateNested({ each: true })
-  @Type(() => SubCapituloDto)
-  subCapitulos?: SubCapituloDto[];
-
-  @IsOptional()
-  @ValidateNested({ each: true })
-  @Type(() => TablaDto)
-  tablas?: TablaDto[];
-
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  placeholders?: string[];
-}
-
-// ---- DTO principal ----
-export class CreatePlantillaDto {
-  @IsNotEmpty()
-  @IsString()
   nombre: string;
 
-  @IsOptional()
   @IsString()
-  descripcion?: string;
+  @IsNotEmpty()
+  descripcion: string;
 
   @IsOptional()
   @IsString()
   tipo_archivo?: string;
 
-  @IsOptional()
   @IsString()
-  ruta_archivo?: string;
+  ruta_archivo: string;
 
-  @IsOptional()
-  @IsUUID()
-  modulo_id?: string;
+   @Type(() => UserDTO) // Usamos UserDTO en lugar de User
+  creado_por: UserDTO;
 
-  @IsOptional()
-  @IsUUID()
-  creado_por?: string;
-
-  // --- Configuración de documento Word ---
+  @IsDate()
+  creado_en: Date;
 
   @IsOptional()
   @IsString()
@@ -110,30 +64,42 @@ export class CreatePlantillaDto {
 
   @IsOptional()
   @IsString()
-  fuente?: string;
+  pie_pagina?: string;
 
-  @IsOptional()
-  @IsInt()
-  tamano_fuente?: number;
+  @IsString()
+  fuente: string;
 
-  @IsOptional()
-  @IsHexColor()
-  color_texto?: string;
+  @IsNumber()
+  tamano_fuente: number;
 
-  @IsOptional()
+  @IsString()
+  color_texto: string;
+
   @IsBoolean()
-  tiene_tablas?: boolean;
+  tiene_tablas: boolean;
 
-  @IsOptional()
   @IsBoolean()
-  autogenerar_indice?: boolean;
+  autogenerar_indice: boolean;
 
   @IsOptional()
-  @ValidateNested({ each: true })
-  @Type(() => CapituloDto)
-  capitulos?: CapituloDto[];
+  @IsObject()
+  estructura?: {
+    tipo: 'documento';
+    titulo?: string;
+    bloques: BloqueDTO[];
+  };
 
   @IsOptional()
-  @IsBoolean()
-  incluir_anexos_en_subcapitulos?: boolean;
+  @IsObject()
+  estilos_detectados?: {
+    nombres_estilos?: string[];
+    estilos_personalizados?: {
+      nombre: string;
+      fuente?: string;
+      tamano_fuente?: number;
+      color?: string;
+      negrita?: boolean;
+      cursiva?: boolean;
+    }[];
+  };
 }
