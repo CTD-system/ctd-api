@@ -15,6 +15,7 @@ import {
   PageNumber,
   TableOfContents,
   WidthType,
+  PageBreak,
 } from 'docx';
 import PDFDocument from 'pdfkit';
 import * as path from 'path';
@@ -30,7 +31,10 @@ import { HistorialService } from '../historial/historial.service';
 import { HistorialAccion } from '../historial/entities/historial_documento.entity';
 import * as fs from 'fs';
 import { ModulosService } from '../modulos/modulos.service';
-
+import { Plantilla } from '../plantillas/entities/plantilla.entity';
+import * as os from 'os';
+import { estructuraToDocxChildren } from 'src/utils/plantillas/convert-Json-to-Docxs';
+import JSZip from 'jszip';
 @Injectable()
 export class DocumentosService {
   constructor(
@@ -42,6 +46,9 @@ export class DocumentosService {
 
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+
+    @InjectRepository(Plantilla)
+    private readonly plantillaRepo: Repository<Plantilla>,
 
     private readonly historialService: HistorialService, // ✅ inyección del historial
     private readonly minioService: MinioService,
@@ -445,7 +452,6 @@ export class DocumentosService {
       filePath,
     );
 
-
     const subidoPorUser = subido_por
       ? await this.userRepo.findOne({ where: { id: subido_por } })
       : undefined;
@@ -622,14 +628,26 @@ export class DocumentosService {
     return this.documentoRepo.save(docEntity);
   }
 
-  // Crear un nuevo documento
-  async create(createDto: CreateDocumentoDto) {
-    const { modulo_id, subido_por, anexos, ...rest } = createDto;
+  //Crear un nuevo documento
 
-    const modulo = await this.moduloRepo.findOne({ where: { id: modulo_id } });
-    if (!modulo) throw new NotFoundException('Módulo no encontrado.');
+  
 
-    let user: User | undefined = undefined;
+async  createFromPlantilla(createDto: CreateDocumentoDto & { plantilla_id: string }) {
+  const { plantilla_id, modulo_id, subido_por, anexos, ...rest } = createDto;
+
+  // 1️⃣ Buscar plantilla
+  const plantilla = await this.plantillaRepo.findOne({
+    where: { id: plantilla_id },
+    relations: ['documento'],
+  });
+  if (!plantilla) throw new NotFoundException('Plantilla no encontrada.');
+
+  // 2️⃣ Buscar módulo
+  const modulo = await this.moduloRepo.findOne({ where: { id: modulo_id } });
+  if (!modulo) throw new NotFoundException('Módulo no encontrado.');
+
+  // 3️⃣ Buscar usuario
+  let user: User | undefined = undefined;
     if (subido_por) {
       const foundUser = await this.userRepo.findOne({
         where: { id: subido_por },
@@ -638,87 +656,90 @@ export class DocumentosService {
       user = foundUser;
     }
 
-    // Buscar anexos si se pasan
-    let anexosDocs: Documento[] = [];
-    if (anexos && anexos.length > 0) {
-      anexosDocs = await this.documentoRepo.findByIds(anexos);
-    }
-
-    const documento = this.documentoRepo.create({
-      ...rest,
-      tipo: (rest.tipo as DocumentoTipo) || DocumentoTipo.OTRO,
-      version: rest.version || 1,
-      modulo,
-      subido_por: user || undefined,
-      anexos: anexosDocs,
-    });
-
-    // Si es Word y hay anexos, agregar referencias en el contenido
-    if (
-      rest.mime_type &&
-      rest.mime_type.includes('word') &&
-      anexosDocs.length > 0 &&
-      rest.ruta_archivo
-    ) {
-      const destinoMinio = modulo
-        ? `${modulo.ruta}/${rest.nombre}`
-        : `documentos/${rest.nombre}`;
-      const docx = require('docx');
-      const fs = require('fs');
-      const buffer = fs.readFileSync(rest.ruta_archivo);
-      // No hay edición directa, así que se crea uno nuevo con el contenido original + referencias
-      const doc = new docx.Document({
-        sections: [
-          {
-            children: [
-              new docx.Paragraph({
-                text: rest.nombre,
-                heading: docx.HeadingLevel.TITLE,
-              }),
-              new docx.Paragraph({ text: 'Contenido original...' }),
-              ...anexosDocs.map(
-                (a) => new docx.Paragraph({ text: `Ver ${a.nombre}` }),
-              ),
-            ],
-          },
-        ],
-      });
-      const newBuffer = await docx.Packer.toBuffer(doc);
-      fs.writeFileSync(rest.ruta_archivo, newBuffer);
-      await this.minioService.uploadFile(
-        'ctd-expedientes',
-        destinoMinio,
-        rest.ruta_archivo,
-      );
-      documento.ruta_archivo = destinoMinio; // ✅ reemplaza la local
-    }
-
-    const saved = await this.documentoRepo.save(documento);
-
-    // ✅ Registrar historial automático
-    await this.historialService.create({
-      documento_id: saved.id,
-      version: saved.version,
-      accion: HistorialAccion.CREADO,
-      usuario_id: user?.id,
-      comentario: 'Documento creado automáticamente.',
-    });
-
-    // Subir archivo a MinIO si hay ruta de archivo
-    if (saved.ruta_archivo && saved.nombre) {
-      try {
-        await this.minioService.uploadFile(
-          'ctd-documentos',
-          saved.nombre,
-          saved.ruta_archivo,
-        );
-      } catch (e) {
-        // Manejar error de subida a MinIO (opcional: log)
-      }
-    }
-
-    return saved;
+  // 4️⃣ Buscar anexos
+  let anexosDocs: Documento[] = [];
+  if (anexos?.length) {
+    const validos = anexos.filter((a) => a?.trim() !== '');
+    if (validos.length) anexosDocs = await this.documentoRepo.findByIds(validos);
   }
+
+  // 5️⃣ Crear documento en DB (metadata)
+  const documento = this.documentoRepo.create({
+    ...rest,
+    tipo: (rest.tipo as DocumentoTipo) || DocumentoTipo.OTRO,
+    version: rest.version || 1,
+    modulo,
+    subido_por: user,
+    anexos: anexosDocs,
+    mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  });
+
+  // 6️⃣ Generar contenido Word con docx
+  const children: any[] = [];
+
+  // Título principal
+  if (plantilla.titulo) {
+    children.push(
+      new Paragraph({
+        text: plantilla.titulo,
+        heading: HeadingLevel.TITLE,
+        alignment: AlignmentType.CENTER,
+      }),
+    );
+  }
+
+  // Índice automático
+  children.push(new TableOfContents('Índice', { hyperlink: true, headingStyleRange: '1-2' }));
+
+  // Contenido dinámico desde la estructura
+  const cuerpo = estructuraToDocxChildren(plantilla.estructura);
+  ;
+  
+  children.push(...cuerpo);
+console.log("CHILDREN",children)
+  // Crear documento base con docx
+  const doc = new Document({
+  numbering: {
+    config: [
+      {
+        reference: 'num',
+        levels: [
+          { level: 0, format: 'decimal', text: '%1.', alignment: AlignmentType.START },
+        ],
+      },
+    ],
+  },
+  sections: [{ children }],
+});
+;
+
+  // Guardar temporalmente
+  const tempPath = path.join(os.tmpdir(), `${rest.nombre || 'documento'}.docx`);
+  const buffer = await Packer.toBuffer(doc);
+  fs.writeFileSync(tempPath, buffer);
+
+  
+
+  // 8️⃣ Subir a MinIO
+  const destinoMinio = modulo ? `${modulo.ruta}/${rest.nombre}.docx` : `documentos/${rest.nombre}.docx`;
+  await this.minioService.uploadFile('ctd-expedientes', destinoMinio, tempPath);
+
+  // 9️⃣ Guardar ruta en DB
+  documento.ruta_archivo = destinoMinio;
+  const saved = await this.documentoRepo.save(documento);
+
+  // 🔟 Registrar historial
+  await this.historialService.create({
+    documento_id: saved.id,
+    version: saved.version,
+    accion: HistorialAccion.CREADO,
+    usuario_id: user?.id,
+    comentario: 'Documento creado a partir de plantilla.',
+  });
+
+  return saved;
+}
+
 
   // Listar todos los documentos
   async findAll() {

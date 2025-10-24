@@ -10,9 +10,10 @@ import { HistorialModule } from '../historial/historial.module'; // ✅ agregado
 import { MinioService } from '../minio.service';
 import { ModulosService } from '../modulos/modulos.service';
 import { Expediente } from '../expedientes/entities/expediente.entity';
+import { Plantilla } from '../plantillas/entities/plantilla.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Expediente, Documento, Modulo, User]), HistorialModule],
+  imports: [TypeOrmModule.forFeature([Expediente, Documento, Modulo, User,Plantilla]), HistorialModule],
   controllers: [DocumentosController],
   providers: [DocumentosService,MinioService,ModulosService],
 })

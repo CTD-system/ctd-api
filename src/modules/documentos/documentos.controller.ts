@@ -27,17 +27,24 @@ import {
 export class DocumentosController {
   constructor(private readonly documentosService: DocumentosService) {}
 
-  // 📄 Crear documento
-  @Post()
-  @ApiOperation({ summary: 'Crear un nuevo documento y asociarlo a un módulo' })
+  // 📄 Crear documento Word desde plantilla existente
+  @Post('word/from-plantilla/:plantillaId')
+  @ApiOperation({
+    summary: 'Crear un documento Word a partir de una plantilla seleccionada',
+  })
+  @ApiParam({
+    name: 'plantillaId',
+    description: 'ID de la plantilla',
+    example: 'uuid-de-la-plantilla',
+  })
   @ApiBody({
     schema: {
       type: 'object',
       properties: {
-        nombre: { type: 'string', example: 'Informe Técnico' },
-        tipo: { type: 'string', example: 'PLANTILLA' },
-        ruta_archivo: { type: 'string', example: 'uploads/doc.docx' },
+        nombre: { type: 'string', example: 'Informe Técnico Generado' },
+
         modulo_id: { type: 'string', format: 'uuid', nullable: true },
+
         subido_por: { type: 'string', format: 'uuid', nullable: true },
         anexos: {
           type: 'array',
@@ -47,15 +54,26 @@ export class DocumentosController {
       },
     },
   })
-  @ApiResponse({ status: 201, description: 'Documento creado exitosamente' })
-  create(@Body() createDto: CreateDocumentoDto) {
-    return this.documentosService.create(createDto);
+  async crearDesdePlantilla(
+    @Param('plantillaId') plantillaId: string,
+    @Body() body: CreateDocumentoDto,
+  ) {
+    // Mapear plantillaId al DTO
+    const createDto: CreateDocumentoDto & { plantilla_id: string } = {
+      ...body,
+      plantilla_id: plantillaId,
+    };
+
+    return this.documentosService.createFromPlantilla(createDto);
   }
 
   // 📄 Listar documentos
   @Get()
   @ApiOperation({ summary: 'Listar todos los documentos con módulo y usuario' })
-  @ApiResponse({ status: 200, description: 'Documentos listados correctamente' })
+  @ApiResponse({
+    status: 200,
+    description: 'Documentos listados correctamente',
+  })
   findAll() {
     return this.documentosService.findAll();
   }
@@ -63,7 +81,11 @@ export class DocumentosController {
   // 📄 Obtener documento por ID
   @Get(':id')
   @ApiOperation({ summary: 'Obtener documento por ID' })
-  @ApiParam({ name: 'id', description: 'ID del documento', example: 'uuid-del-doc' })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del documento',
+    example: 'uuid-del-doc',
+  })
   @ApiResponse({ status: 200, description: 'Documento encontrado' })
   @ApiResponse({ status: 404, description: 'Documento no encontrado' })
   findOne(@Param('id') id: string) {
@@ -91,7 +113,10 @@ export class DocumentosController {
       },
     },
   })
-  @ApiResponse({ status: 200, description: 'Documento actualizado correctamente' })
+  @ApiResponse({
+    status: 200,
+    description: 'Documento actualizado correctamente',
+  })
   update(@Param('id') id: string, @Body() dto: UpdateDocumentoDto) {
     return this.documentosService.update(id, dto);
   }
@@ -100,7 +125,10 @@ export class DocumentosController {
   @Delete(':id')
   @ApiOperation({ summary: 'Eliminar un documento y registrar historial' })
   @ApiParam({ name: 'id', description: 'ID del documento a eliminar' })
-  @ApiResponse({ status: 200, description: 'Documento eliminado correctamente' })
+  @ApiResponse({
+    status: 200,
+    description: 'Documento eliminado correctamente',
+  })
   @ApiResponse({ status: 404, description: 'Documento no encontrado' })
   remove(@Param('id') id: string) {
     return this.documentosService.remove(id);
@@ -135,31 +163,54 @@ export class DocumentosController {
       },
     },
   })
-  async crearWord(@Body() body: {
-    titulo: string;
-    encabezado?: string;
-    indice?: string[];
-    capitulos?: { titulo: string; contenido?: string; placeholders?: string[] }[];
-    moduloId?: string;
-    expedienteId?: string;
-  }) {
+  async crearWord(
+    @Body()
+    body: {
+      titulo: string;
+      encabezado?: string;
+      indice?: string[];
+      capitulos?: {
+        titulo: string;
+        contenido?: string;
+        placeholders?: string[];
+      }[];
+      moduloId?: string;
+      expedienteId?: string;
+    },
+  ) {
     return this.documentosService.crearDocumentoWord(body);
   }
 
   // 📝 Editar documento Word existente
   @Post('word/edit/:id')
-  @ApiOperation({ summary: 'Editar contenido y capítulos de un documento Word' })
-  @ApiParam({ name: 'id', description: 'ID del documento Word', example: 'uuid-del-doc' })
+  @ApiOperation({
+    summary: 'Editar contenido y capítulos de un documento Word',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del documento Word',
+    example: 'uuid-del-doc',
+  })
   @ApiBody({
     schema: {
       type: 'object',
       properties: {
-        contenido: { type: 'string', example: 'Nuevo contenido del documento...' },
-        capitulos: { type: 'array', items: { type: 'string' }, example: ['Capítulo 1', 'Capítulo 2'] },
+        contenido: {
+          type: 'string',
+          example: 'Nuevo contenido del documento...',
+        },
+        capitulos: {
+          type: 'array',
+          items: { type: 'string' },
+          example: ['Capítulo 1', 'Capítulo 2'],
+        },
       },
     },
   })
-  async editarWord(@Param('id') id: string, @Body() body: { contenido: string; capitulos?: string[] }) {
+  async editarWord(
+    @Param('id') id: string,
+    @Body() body: { contenido: string; capitulos?: string[] },
+  ) {
     return this.documentosService.editarDocumentoWord(id, body);
   }
 
@@ -171,30 +222,56 @@ export class DocumentosController {
       type: 'object',
       properties: {
         titulo: { type: 'string', example: 'Reporte de Resultados' },
-        capitulos: { type: 'array', items: { type: 'string' }, example: ['Resumen', 'Resultados'] },
+        capitulos: {
+          type: 'array',
+          items: { type: 'string' },
+          example: ['Resumen', 'Resultados'],
+        },
         moduloId: { type: 'string', format: 'uuid', nullable: true },
         expedienteId: { type: 'string', format: 'uuid', nullable: true },
       },
     },
   })
-  async crearPDF(@Body() body: { titulo: string; capitulos: string[]; moduloId?: string; expedienteId?: string }) {
+  async crearPDF(
+    @Body()
+    body: {
+      titulo: string;
+      capitulos: string[];
+      moduloId?: string;
+      expedienteId?: string;
+    },
+  ) {
     return this.documentosService.crearDocumentoPDF(body);
   }
 
   // 🧾 Editar PDF existente
   @Post('pdf/edit/:id')
   @ApiOperation({ summary: 'Editar contenido y capítulos de un documento PDF' })
-  @ApiParam({ name: 'id', description: 'ID del documento PDF', example: 'uuid-del-doc' })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del documento PDF',
+    example: 'uuid-del-doc',
+  })
   @ApiBody({
     schema: {
       type: 'object',
       properties: {
-        contenido: { type: 'string', example: 'Contenido actualizado del PDF...' },
-        capitulos: { type: 'array', items: { type: 'string' }, example: ['Capítulo 1', 'Capítulo 2'] },
+        contenido: {
+          type: 'string',
+          example: 'Contenido actualizado del PDF...',
+        },
+        capitulos: {
+          type: 'array',
+          items: { type: 'string' },
+          example: ['Capítulo 1', 'Capítulo 2'],
+        },
       },
     },
   })
-  async editarPDF(@Param('id') id: string, @Body() body: { contenido: string; capitulos?: string[] }) {
+  async editarPDF(
+    @Param('id') id: string,
+    @Body() body: { contenido: string; capitulos?: string[] },
+  ) {
     return this.documentosService.editarDocumentoPDF(id, body);
   }
 
@@ -206,14 +283,21 @@ export class DocumentosController {
     schema: {
       type: 'object',
       properties: {
-        file: { type: 'string', format: 'binary', description: 'Archivo a subir' },
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Archivo a subir',
+        },
         moduloId: { type: 'string', format: 'uuid', nullable: true },
         expedienteId: { type: 'string', format: 'uuid', nullable: true },
       },
     },
   })
   @UseInterceptors(FileInterceptor('file'))
-  async crearPlantillaDesdeDocumento(@UploadedFile() file: any, @Body() body: { moduloId?: string; expedienteId?: string }) {
+  async crearPlantillaDesdeDocumento(
+    @UploadedFile() file: any,
+    @Body() body: { moduloId?: string; expedienteId?: string },
+  ) {
     return this.documentosService.crearPlantillaDesdeDocumento(file, body);
   }
 }

@@ -9,12 +9,14 @@ import { Expediente } from '../expedientes/entities/expediente.entity';
 import { Modulo } from '../modulos/entities/modulo.entity';
 import { MinioService } from '../minio.service';
 import { MinioUploadController } from './minio-upload.controller';
+import { MinioUploadService } from './minio-upload.service';
+import { User } from '../users/entities/user.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Documento, Plantilla, Expediente, Modulo]),
+    TypeOrmModule.forFeature([Documento, Plantilla, Expediente, Modulo,User]),
   ],
-  providers: [ImportService, MinioService],
+  providers: [ImportService, MinioService,MinioUploadService],
   controllers: [ImportController, MinioImportController,MinioUploadController],
 })
 export class ImportModule {}
