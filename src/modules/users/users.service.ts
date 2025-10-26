@@ -49,6 +49,10 @@ const newUser = this.userRepo.create({
     return user;
   }
 
+  async findByEmail(email: string): Promise<User | null> {
+  return this.userRepo.findOne({ where: { email } });
+}
+
   // ✅ Actualizar usuario
   async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
     const user = await this.findOne(id);

@@ -1,17 +1,20 @@
-import { Controller, Get, Post, Body, Param, Delete, Put, Query, NotFoundException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Delete, Put, Query, NotFoundException, UnauthorizedException, UseGuards } from '@nestjs/common';
 import { PlantillasService } from './plantillas.service';
 import { PlantillaDTO } from './dto/create-plantilla.dto';
 import { UpdatePlantillaDto } from './dto/update-plantilla.dto';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { User } from '../users/entities/user.entity'; // Asegúrate de que esta entidad esté bien importada
 import { CurrentUser } from 'src/decorators/current-user.decorator';
+import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
 
 @ApiTags('Plantillas')
+@ApiBearerAuth()
 @Controller('plantillas')
 export class PlantillasController {
   constructor(private readonly plantillasService: PlantillasService) {}
 
   // Crear una plantilla
+  @UseGuards(JwtAuthGuard)
   @Post()
   @ApiOperation({ summary: 'Crear una nueva plantilla' })
   @ApiResponse({
@@ -23,7 +26,13 @@ export class PlantillasController {
     @Body() createPlantillaDTO: PlantillaDTO,
     @CurrentUser() user: User,  // Usamos el decorador `CurrentUser` para obtener el usuario actual (requiere configuración adicional)
   ): Promise<PlantillaDTO> {
-    return this.plantillasService.create(createPlantillaDTO, user.id);
+    ;
+    
+    if (!user || !user.id) {
+  throw new UnauthorizedException('Usuario no autenticado');
+}
+return this.plantillasService.create(createPlantillaDTO, user.id);
+
   }
 
   // Obtener todas las plantillas

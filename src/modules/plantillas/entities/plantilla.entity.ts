@@ -50,8 +50,7 @@ export class Plantilla {
   @Column({ nullable: true })
   tipo_archivo: string;
 
-  @Column()
-  ruta_archivo: string;
+  
 
   @ManyToOne(() => User, (user) => user.plantillas, { eager: true })
   creado_por: User;
@@ -81,8 +80,7 @@ export class Plantilla {
   @Column({ default: '#000000' })
   color_texto: string;
 
-  @Column({ default: false })
-  tiene_tablas: boolean;
+  
 
   @Column({ default: false })
   autogenerar_indice: boolean;

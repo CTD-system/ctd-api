@@ -200,7 +200,7 @@ export class MinioUploadService {
           nombre: `Plantilla_${nombreLimpio}`,
           descripcion: `Plantilla creada desde ${file.originalname}`,
           tipo_archivo: file.mimetype,
-          ruta_archivo: filePath,
+          
           creado_por: creado_por ? ({ id: creado_por } as any) : undefined,
           ...config,
         });

@@ -16,7 +16,13 @@ async function bootstrap() {
     .build();
 
     const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('ctd/docs', app, document); // ruta: http://localhost:4000/api/docs
+  SwaggerModule.setup('ctd/docs', app, document,{
+    swaggerOptions: {
+      docExpansion: 'none', // 👈 Las tags aparecen cerradas por defecto
+      operationsSorter: 'alpha', // Opcional: ordena alfabéticamente los endpoints
+      tagsSorter: 'alpha', // Opcional: ordena las tags alfabéticamente
+    },
+  }); // ruta: http://localhost:4000/api/docs
 
   await app.listen(process.env.APP_PORT || 4000);
 }

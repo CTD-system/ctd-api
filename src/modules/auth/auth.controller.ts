@@ -1,30 +1,63 @@
 import { Controller, Post, Body, UnauthorizedException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import { UsersService } from '../users/users.service';
+import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
+import { AuthService } from './auth.service';
 
+@ApiTags('Autenticación')
 @Controller('auth')
 export class AuthController {
-  constructor(
-    private readonly usersService: UsersService,
-    private readonly jwtService: JwtService,
-  ) {}
+  constructor(private readonly authService: AuthService) {}
 
   @Post('login')
+  @ApiOperation({ summary: 'Iniciar sesión y obtener token JWT' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        username: { type: 'string', example: 'usuario@gmail.com' },
+        password: { type: 'string', example: '123456' },
+      },
+      required: ['email', 'password'],
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Usuario autenticado correctamente',
+    schema: {
+      example: {
+        access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        user: { id: 'uuid', username: 'juanperez', email: 'juan@mail.com' },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Credenciales inválidas' })
   async login(@Body() body: { username: string; password: string }) {
-    const user = await this.usersService.validateUser(body.username, body.password);
-    if (!user) throw new UnauthorizedException('Credenciales inválidas');
-    const payload = { username: user.username, sub: user.id };
-    return {
-      access_token: this.jwtService.sign(payload),
-    };
+    return this.authService.login(body.username, body.password);
   }
 
   @Post('register')
+  @ApiOperation({ summary: 'Registrar un nuevo usuario' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        username: { type: 'string', example: 'juanperez' },
+        email: { type: 'string', example: 'juan@mail.com' },
+        password: { type: 'string', example: '123456' },
+      },
+      required: ['username', 'email', 'password'],
+    },
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Usuario registrado correctamente',
+    schema: {
+      example: {
+        access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        user: { id: 'uuid', username: 'juanperez', email: 'juan@mail.com' },
+      },
+    },
+  })
   async register(@Body() body: { username: string; password: string; email: string }) {
-    const user = await this.usersService.create({ username: body.username, password: body.password, email: body.email });
-    const payload = { username: user.username, sub: user.id };
-    return {
-      access_token: this.jwtService.sign(payload),
-    };
+    return this.authService.register(body.username, body.email, body.password);
   }
 }

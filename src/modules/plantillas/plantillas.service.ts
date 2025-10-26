@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Body, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Plantilla } from './entities/plantilla.entity';
@@ -17,7 +17,7 @@ export class PlantillasService {
 
   // Crear una nueva plantilla
   async create(
-    createPlantillaDTO: PlantillaDTO,
+   @Body() createPlantillaDTO: PlantillaDTO,
     userId: string,
   ): Promise<PlantillaDTO> {
     const { ...plantillaData } = createPlantillaDTO;
@@ -39,11 +39,17 @@ export class PlantillasService {
 
   // Obtener todas las plantillas
   async findAll(): Promise<PlantillaDTO[]> {
-    const plantillas = await this.plantillaRepository.find({
-      relations: ['creado_por'],
-    });
-    return plantillas.map((plantilla) => this.toDTO(plantilla));
-  }
+  const plantillas = await this.plantillaRepository.find({
+    relations: ['creado_por'],
+  });
+
+  return plantillas.map((plantilla) => {
+    // Excluimos los campos 'estructura', 'encabezado' y 'pie_pagina' solo aquí
+    const { estructura, encabezado, pie_pagina,estilos_detectados, ...plantillaData } = plantilla;
+    return this.toDTO({ ...plantillaData, creado_por: plantilla.creado_por });
+  });
+}
+
 
   // Obtener una plantilla por su ID
   async findOne(id: string): Promise<PlantillaDTO> {
@@ -93,15 +99,11 @@ export class PlantillasService {
 
   // Convertir la entidad a DTO
   private toDTO(plantilla: Plantilla): PlantillaDTO {
-    const { creado_por, ...plantillaData } = plantilla;
+    const { creado_por,...plantillaData } = plantilla;
     return {
       ...plantillaData,
-      creado_por: {
-        id: creado_por.id,
-        username: creado_por.username,
-        email: creado_por.email,
-        
-      },
+      creado_por: { id: creado_por?.id }
+      
     };
   }
 }

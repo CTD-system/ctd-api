@@ -8,10 +8,11 @@ import { Documento } from '../documentos/entities/documento.entity';
 import { Plantilla } from '../plantillas/entities/plantilla.entity';
 import { MinioService } from '../minio.service';
 import { MinioDownloadController } from './minio-download.controller';
+import { MinioDownloadService } from './minio-download.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Expediente, Documento, Plantilla])],
-  providers: [ExportService, MinioService],
+  providers: [ExportService, MinioService,MinioDownloadService],
   controllers: [ExportController, MinioExportController,MinioDownloadController],
 })
 export class ExportModule {}
