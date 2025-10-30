@@ -21,6 +21,9 @@ import { parseStringPromise } from 'xml2js';
 import * as mammoth from 'mammoth';
 import * as iconv from 'iconv-lite';
 import { JSDOM } from 'jsdom'
+import extract from 'extract-zip';
+import * as os from 'os';
+import { v4 as uuidv4 } from 'uuid';
 @Injectable()
 export class MinioUploadService {
   constructor(
@@ -60,194 +63,270 @@ export class MinioUploadService {
   }
 
   // 📦 Subida de expediente ZIP
-  async uploadExpediente(file: Multer.File) {
-    const bucket = 'ctd-imports';
-    if (!file.originalname.endsWith('.zip')) {
-      throw new BadRequestException(
-        'Solo se aceptan archivos .zip para expedientes.',
-      );
-    }
+  // async uploadExpediente(file: Multer.File) {
+  //   const bucket = 'ctd-imports';
+  //   if (!file.originalname.endsWith('.zip')) {
+  //     throw new BadRequestException(
+  //       'Solo se aceptan archivos .zip para expedientes.',
+  //     );
+  //   }
 
-    const expedienteNombre = this.limpiarNombre(
-      path.basename(file.originalname, '.zip'),
-    );
-    const filePath = path.resolve('uploads/expedientes', file.originalname);
+  //   const expedienteNombre = this.limpiarNombre(
+  //     path.basename(file.originalname, '.zip'),
+  //   );
+  //   const filePath = path.resolve('uploads/expedientes', file.originalname);
 
-    await this.minioService.uploadFile(bucket, file.originalname, filePath);
+  //   await this.minioService.uploadFile(bucket, file.originalname, filePath);
 
-    const expediente = this.expedienteRepo.create({
-      codigo: `EXP-${Date.now()}`,
-      nombre: expedienteNombre,
-      descripcion: `Expediente cargado manualmente desde archivo ZIP (${file.originalname})`,
-      estado: ExpedienteEstado.BORRADOR,
-    });
-    await this.expedienteRepo.save(expediente);
+  //   const expediente = this.expedienteRepo.create({
+  //     codigo: `EXP-${Date.now()}`,
+  //     nombre: file.originalname,
+  //     descripcion: `Expediente cargado manualmente desde archivo ZIP (${file.originalname})`,
+  //     estado: ExpedienteEstado.BORRADOR,
+  //   });
+  //   await this.expedienteRepo.save(expediente);
 
-    return {
-      message: 'Expediente subido y registrado correctamente.',
-      bucket,
-      fileName: file.originalname,
-      expedienteId: expediente.id,
-    };
-  }
+  //   return {
+  //     message: 'Expediente subido y registrado correctamente.',
+  //     bucket,
+  //     fileName: file.originalname,
+  //     expedienteId: expediente.id,
+  //   };
+  // }
 
   // 📁 Subida de módulo ZIP
-  async uploadModulo(file: Multer.File) {
-    const bucket = 'ctd-imports';
-    if (!file.originalname.endsWith('.zip')) {
-      throw new BadRequestException(
-        'Solo se aceptan archivos .zip para módulos.',
-      );
-    }
-
-    const moduloNombre = this.limpiarNombre(
-      path.basename(file.originalname, '.zip'),
-    );
-    const filePath = path.resolve('uploads/modulos', file.originalname);
-
-    await this.minioService.uploadFile(bucket, file.originalname, filePath);
-
-    const modulo = this.moduloRepo.create({
-      titulo: moduloNombre,
-      descripcion: `Módulo cargado manualmente desde archivo ZIP (${file.originalname})`,
-      estado: ModuloEstado.BORRADOR,
-      numero: 1,
-    });
-    await this.moduloRepo.save(modulo);
-
-    return {
-      message: 'Módulo subido y registrado correctamente.',
-      bucket,
-      fileName: file.originalname,
-      moduloId: modulo.id,
-    };
+  async uploadModulo(file: Multer.File, expedienteId: string) {
+  if (!expedienteId) {
+    throw new BadRequestException('Debe proporcionarse un expediente para guardar el módulo.');
   }
+
+  // Buscar el expediente en BD para obtener la ruta en MinIO
+  const expediente = await this.expedienteRepo.findOne({ where: { id: expedienteId } });
+  if (!expediente) {
+    throw new BadRequestException('Expediente no encontrado.');
+  }
+
+  const bucket = 'ctd-expedientes'; // usamos mismo bucket de expedientes
+  const expedienteBaseKey = `expedientes/${expediente.nombre}` || `expedientes/${expediente.id}`; // ruta base en MinIO
+
+  if (!file.originalname.endsWith('.zip')) {
+    throw new BadRequestException('Solo se aceptan archivos .zip para módulos.');
+  }
+
+  const moduloNombre = this.limpiarNombre(path.basename(file.originalname, '.zip'));
+  const tmpDir = path.join(os.tmpdir(), `ctd_mod_${Date.now()}_${uuidv4()}`);
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const zipPath = file.path
+
+  // Extraer ZIP
+  await extract(zipPath, { dir: tmpDir });
+
+  // Validar estructura módulo
+  this.validarEstructuraZip(tmpDir, 'modulo');
+
+  // Carpeta raíz del módulo
+  const baseFolders = fs.readdirSync(tmpDir);
+  const carpetaRaiz = baseFolders.find((f) =>
+    fs.lstatSync(path.join(tmpDir, f)).isDirectory()
+  );
+  const basePath = carpetaRaiz ? path.join(tmpDir, carpetaRaiz) : tmpDir;
+
+  // Crear módulo en BD asociado al expediente
+  const moduloRuta = `${expedienteBaseKey}/modulos/${moduloNombre}`;
+  const modulo = this.moduloRepo.create({
+    titulo: moduloNombre,
+    descripcion: `Módulo importado desde ${file.originalname}`,
+    estado: ModuloEstado.BORRADOR,
+    ruta: moduloRuta,
+    expediente: expediente,
+  });
+  const savedModulo = await this.moduloRepo.save(modulo);
+
+  // Crear carpeta raíz en MinIO
+  await this.minioService.createFolder(bucket, moduloRuta);
+
+  // Subir archivos del módulo recursivamente
+  const subirCarpeta = async (folderPath: string, rutaDestino: string) => {
+    const elementos = fs.readdirSync(folderPath);
+    for (const elemento of elementos) {
+      const elementoPath = path.join(folderPath, elemento);
+      const stats = fs.lstatSync(elementoPath);
+
+      if (stats.isFile()) {
+        const ext = path.extname(elemento).toLowerCase();
+        const nombreSinExt = path.basename(elemento, ext);
+        const objectKey = `${rutaDestino}/${elemento}`;
+        await this.minioService.uploadFile(bucket, objectKey, elementoPath);
+
+        let tipoDoc = DocumentoTipo.OTRO;
+        let mime = 'application/octet-stream';
+        if (ext === '.docx' || ext === '.doc') {
+          tipoDoc = DocumentoTipo.INFORME;
+          mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        } else if (ext === '.pdf') {
+          tipoDoc = DocumentoTipo.ANEXO;
+          mime = 'application/pdf';
+        }
+
+        await this.documentoRepo.save({
+          modulo: savedModulo,
+          nombre: elemento,
+          tipo: tipoDoc,
+          version: 1,
+          ruta_archivo: objectKey,
+          mime_type: mime,
+        });
+
+        // Extraer configuración si es plantilla Word
+        
+      }  if (stats.isDirectory()) {
+        await subirCarpeta(elementoPath, `${rutaDestino}/${elemento}`);
+      }
+    }
+  };
+
+  await subirCarpeta(basePath, moduloRuta);
+
+  // Limpiar temporal
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+
+  return {
+    message: `Módulo "${moduloNombre}" importado correctamente dentro del expediente "${expediente.nombre}"`,
+    moduloId: savedModulo.id,
+    bucket,
+    baseKey: moduloRuta,
+  };
+}
+
+
 
   // 📄 Subida de documentos (no ZIP)
   async uploadDocumentos(
-    files: Multer.File[],
-    tipos: string[] | string,
-    creado_por?: string,
-  ) {
-    const bucket = 'ctd-imports';
+  files: Multer.File[],
+  tipos: string[] | string,
+  moduloId: string,
+  creado_por?: string,
+) {
+  if (!files?.length) {
+    throw new BadRequestException('Debe subir al menos un archivo.');
+  }
 
-    if (!files?.length) {
-      throw new BadRequestException('Debe subir al menos un archivo.');
+  // Verificar módulo
+  const modulo = await this.moduloRepo.findOne({
+    where: { id: moduloId },
+    relations: ['expediente'],
+  });
+  if (!modulo) {
+    throw new BadRequestException('El módulo especificado no existe.');
+  }
+
+  const expediente = modulo.expediente;
+  if (!expediente) {
+    throw new BadRequestException('El módulo no está asociado a ningún expediente.');
+  }
+
+  const bucket = 'ctd-expedientes';
+  const tiposArray = Array.isArray(tipos) ? tipos : [tipos];
+
+  if (tiposArray.length !== files.length) {
+    throw new BadRequestException(
+      `Debe especificar un tipo por cada archivo (${files.length} archivos, ${tiposArray.length} tipos recibidos).`,
+    );
+  }
+
+  const guardados: (Documento & { nombreBase: string })[] = [];
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const tipoInput = tiposArray[i]?.toLowerCase();
+
+    if (path.extname(file.originalname).toLowerCase() === '.zip') {
+      throw new BadRequestException(`No se permiten archivos .zip (${file.originalname}).`);
     }
 
-    const tiposArray = Array.isArray(tipos) ? tipos : [tipos];
-    if (tiposArray.length !== files.length) {
-      throw new BadRequestException(
-        `Debe especificar un tipo por cada archivo (${files.length} archivos, ${tiposArray.length} tipos recibidos).`,
-      );
+    const nombreLimpio = this.limpiarNombre(file.originalname);
+    const nombreBase = path.parse(file.originalname).name.toLowerCase();
+
+    // Determinar tipo de documento
+    let tipoFinal: DocumentoTipo;
+    switch (tipoInput) {
+      case 'plantilla':
+        tipoFinal = DocumentoTipo.PLANTILLA;
+        break;
+      case 'anexo':
+        tipoFinal = DocumentoTipo.ANEXO;
+        break;
+      case 'informe':
+        tipoFinal = DocumentoTipo.INFORME;
+        break;
+      default:
+        tipoFinal = DocumentoTipo.OTRO;
     }
 
-    const guardados: (Documento & { nombreBase: string })[] = [];
+    // 🔹 Nueva lógica de ruta: si es ANEXO → dentro de /ANEXOS/{modulo}
+    const baseRuta =
+      tipoFinal === DocumentoTipo.ANEXO
+        ? `expedientes/${expediente.nombre}/ANEXOS/${modulo.titulo}`
+        : `expedientes/${expediente.nombre}/modulos/${modulo.titulo}`;
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const tipoInput = tiposArray[i]?.toLowerCase();
+    await this.minioService.createFolder(bucket, baseRuta);
 
-      if (path.extname(file.originalname).toLowerCase() === '.zip') {
-        throw new BadRequestException(
-          `No se permiten archivos .zip (${file.originalname}).`,
-        );
-      }
-      console.log('nombre', file.originalname);
+    const objectKey = `${baseRuta}/${file.originalname}`;
+    await this.minioService.uploadFile(bucket, objectKey, file.path);
 
-      const filePath = path.resolve('uploads/documentos', file.originalname);
-      const nombreLimpio = this.limpiarNombre(file.originalname);
-      const nombreBase = path.parse(file.originalname).name.toLowerCase();
-      console.log('nombreLIMPIO', nombreLimpio);
-      await this.minioService.uploadFile(bucket, file.originalname, filePath);
+    // Crear documento vinculado al módulo
+    const doc = this.documentoRepo.create({
+      modulo,
+      nombre: nombreLimpio,
+      tipo: tipoFinal,
+      version: 1,
+      ruta_archivo: objectKey,
+      mime_type: file.mimetype,
+    });
+    const savedDoc = await this.documentoRepo.save(doc);
+    guardados.push({ ...savedDoc, nombreBase });
 
-      // Determinar tipo de documento
-      let tipoFinal: DocumentoTipo;
-      switch (tipoInput) {
-        case 'plantilla':
-          tipoFinal = DocumentoTipo.PLANTILLA;
-          break;
-        case 'anexo':
-          tipoFinal = DocumentoTipo.ANEXO;
-          break;
-        case 'informe':
-          tipoFinal = DocumentoTipo.INFORME;
-          break;
-        default:
-          tipoFinal = DocumentoTipo.OTRO;
-      }
-
-      // Crear el registro en Documentos
-      const doc = this.documentoRepo.create({
-        nombre: nombreLimpio,
-        tipo: tipoFinal,
-        version: 1,
-        ruta_archivo: filePath,
-        mime_type: file.mimetype,
-      });
-      const savedDoc = await this.documentoRepo.save(doc);
-      guardados.push({ ...savedDoc, nombreBase });
-
-      // 🧩 Si es una plantilla Word, extraer configuración y crear registro
-      if (
-        tipoFinal === DocumentoTipo.PLANTILLA &&
-        file.mimetype ===
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      ) {
-        const config = await this.extraerConfiguracionPlantillaWord(filePath);
-
+    // Si es plantilla Word, procesar configuración
+    if (
+      tipoFinal === DocumentoTipo.PLANTILLA &&
+      file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    ) {
+      try {
+        const config = await this.extraerConfiguracionPlantillaWord(file.path);
         const plantilla = this.plantillaRepo.create({
           nombre: `Plantilla_${nombreLimpio}`,
           descripcion: `Plantilla creada desde ${file.originalname}`,
           tipo_archivo: file.mimetype,
-          
           creado_por: creado_por ? ({ id: creado_por } as any) : undefined,
           ...config,
         });
-
         await this.plantillaRepo.save(plantilla);
+      } catch (err) {
+        console.warn(`Error procesando plantilla ${file.originalname}:`, err.message);
       }
     }
-
-    // 🔗 Vincular anexos automáticamente
-    for (const doc of guardados) {
-      const relacionados = guardados.filter(
-        (d) =>
-          d.nombre === doc.nombre &&
-          d.id !== doc.id &&
-          d.tipo !== DocumentoTipo.PLANTILLA,
-      );
-
-      if (relacionados.length > 0) {
-        const documento = await this.documentoRepo.findOne({
-          where: { id: doc.id },
-          relations: ['anexos'],
-        });
-        if (documento) {
-          documento.anexos = [...(documento.anexos || []), ...relacionados];
-          await this.documentoRepo.save(documento);
-        }
-      }
-    }
-
-    return {
-      message:
-        'Documentos subidos, registrados y vinculados correctamente (incluyendo plantillas con configuración de Word).',
-      bucket,
-      resultados: guardados.map((g) => ({
-        id: g.id,
-        nombre: g.nombre,
-        tipo: g.tipo,
-        ruta: g.ruta_archivo,
-      })),
-    };
   }
+
+  return {
+    message: `Se subieron ${guardados.length} documentos al módulo "${modulo.titulo}" del expediente "${expediente.nombre}".`,
+    moduloId: modulo.id,
+    bucket,
+    resultados: guardados.map((g) => ({
+      id: g.id,
+      nombre: g.nombre,
+      tipo: g.tipo,
+      ruta: g.ruta_archivo,
+    })),
+  };
+}
+
+
 
   /**
    * 🧠 Extrae configuración de Word (.docx) para una plantilla
    */
 
-  private async extraerConfiguracionPlantillaWord(
+   async extraerConfiguracionPlantillaWord(
   filePath: string,
 ): Promise<Partial<Plantilla>> {
   try {
@@ -521,6 +600,205 @@ const filasAnidadas: Set<string> = new Set();
   console.log(filas);
    
   return { tipo: 'tabla', encabezados, filas };
+}
+
+private validarEstructuraZip(
+  basePath: string,
+  tipo: 'documento' | 'modulo' | 'expediente',
+) {
+  const elementos = fs.readdirSync(basePath);
+  const carpetas = elementos.filter((e) =>
+    fs.lstatSync(path.join(basePath, e)).isDirectory(),
+  );
+  const archivos = elementos.filter((e) =>
+    fs.lstatSync(path.join(basePath, e)).isFile(),
+  );
+
+  // 🔸 Validar estructura para Documento
+  if (tipo === 'documento') {
+    if (carpetas.length > 0) {
+      throw new BadRequestException(
+        'El ZIP de documento no debe contener carpetas, solo un archivo.',
+      );
+    }
+    if (archivos.length !== 1) {
+      throw new BadRequestException(
+        'El ZIP de documento debe contener exactamente un archivo.',
+      );
+    }
+  }
+
+  // 🔸 Validar estructura para Módulo
+  if (tipo === 'modulo') {
+    if (carpetas.length !== 1) {
+      throw new BadRequestException(
+        'El ZIP de módulo debe contener exactamente una carpeta raíz.',
+      );
+    }
+
+    const carpetaRaiz = path.join(basePath, carpetas[0]);
+    const contenidoRaiz = fs.readdirSync(carpetaRaiz);
+
+    const subcarpetasInternas = contenidoRaiz.filter((e) =>
+      fs.lstatSync(path.join(carpetaRaiz, e)).isDirectory(),
+    );
+
+    if (subcarpetasInternas.length > 0) {
+      throw new BadRequestException(
+        'La carpeta del módulo no debe contener subcarpetas, solo documentos.',
+      );
+    }
+  }
+
+  // 🔸 Validar estructura para Expediente
+  if (tipo === 'expediente') {
+    if (carpetas.length === 0) {
+      throw new BadRequestException(
+        'El ZIP de expediente debe contener al menos una carpeta (módulo).',
+      );
+    }
+
+    // Las carpetas pueden tener más subcarpetas, así que solo validamos que no esté vacío
+    const totalArchivos = elementos.length;
+    if (totalArchivos === 0) {
+      throw new BadRequestException(
+        'El ZIP de expediente no puede estar vacío.',
+      );
+    }
+  }
+}
+
+async importarCTD(zipPath: string) {
+  if (!fs.existsSync(zipPath)) {
+    throw new BadRequestException('Archivo ZIP no encontrado');
+  }
+
+  // Crear carpeta temporal única
+  const tmpDir = path.join(os.tmpdir(), `ctd_import_${Date.now()}_${uuidv4()}`);
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  try {
+    // Extraer ZIP a temporal
+    await extract(zipPath, { dir: path.resolve(tmpDir) });
+
+    // Validar estructura (lanza si no es correcta)
+    this.validarEstructuraZip(tmpDir, 'expediente');
+
+    // Buscar la carpeta raíz si existe
+    const baseFolders = fs.readdirSync(tmpDir);
+    const carpetaRaiz = baseFolders.find((f) =>
+      fs.lstatSync(path.join(tmpDir, f)).isDirectory(),
+    );
+    const basePath = carpetaRaiz ? path.join(tmpDir, carpetaRaiz) : tmpDir;
+
+    // Nombre limpio y creación del expediente en BD
+    const expedienteNombre = this.limpiarNombre(path.basename(basePath));
+    const codigoExpediente = `EXP-${Date.now()}`;
+
+    let user: User | null = null; // si necesitas asignar creado_por, búscalo previamente
+
+    const expediente = this.expedienteRepo.create({
+      codigo: codigoExpediente,
+      nombre: expedienteNombre,
+      descripcion: `Expediente importado desde carpeta ${expedienteNombre}`,
+      estado: ExpedienteEstado.BORRADOR,
+      creado_por: user || undefined,
+    });
+    const savedExpediente = await this.expedienteRepo.save(expediente);
+
+    // Crear carpeta raíz en MinIO: expedientes/{codigo}
+    const bucket = 'ctd-expedientes';
+    const expedienteBaseKey = `expedientes/${expedienteNombre}`;
+    await this.minioService.createFolder(bucket, expedienteBaseKey);
+
+    // Contador de módulos para numeración
+    let moduloCounter = 1;
+
+    // Helper: subir un archivo local a MinIO y devolver objectName
+    const uploadFileToMinio = async (localPath: string, objectKey: string) => {
+      // objectKey es la ruta dentro del bucket, p. ej. expedientes/EXP-.../mod1/doc.pdf
+      await this.minioService.uploadFile(bucket, objectKey, localPath);
+      return objectKey;
+    };
+
+    // Procesar carpetas recursivamente creando módulos y documentos,
+    // y subiendo cada archivo a MinIO sin dejar copia local permanente.
+    const procesarCarpeta = async (folderPath: string, parentRuta: string, parentName = '') => {
+      const carpetaNombre = this.limpiarNombre(path.basename(folderPath));
+      const moduloRuta = path.posix.join(parentRuta, carpetaNombre).replace(/\\/g, '/'); // ruta lógica
+      const tituloModulo = parentName ? `${parentName} / ${carpetaNombre}` : carpetaNombre;
+
+      const modulo = this.moduloRepo.create({
+        expediente: savedExpediente,
+        titulo: tituloModulo,
+        descripcion: `Módulo importado desde ${carpetaNombre}`,
+        estado: ModuloEstado.BORRADOR,
+        ruta: moduloRuta,
+      });
+      const savedModulo = await this.moduloRepo.save(modulo);
+
+      const elementos = fs.readdirSync(folderPath);
+      for (const elemento of elementos) {
+        const elementoPath = path.join(folderPath, elemento);
+        const stats = fs.lstatSync(elementoPath);
+
+        if (stats.isDirectory()) {
+          // Recursión: subcarpeta → submódulo
+          await procesarCarpeta(elementoPath, moduloRuta, carpetaNombre);
+        } else if (stats.isFile()) {
+          const ext = path.extname(elemento).toLowerCase();
+          const nombreSinExt = path.basename(elemento, ext);
+          // Construir objectKey en MinIO: expedientes/{codigo}/{ruta_relativa_al_base}
+          const relativePath = path.relative(basePath, elementoPath).split(path.sep).join('/');
+          const objectKey = `${expedienteBaseKey}/${relativePath}`;
+
+          // Subir a MinIO
+          await uploadFileToMinio(elementoPath, objectKey);
+
+          // Determinar tipo de documento
+          let tipoDoc = DocumentoTipo.OTRO;
+          let mime = 'application/octet-stream';
+          if (ext === '.docx' || ext === '.doc') {
+            tipoDoc = DocumentoTipo.INFORME;
+            mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+          } else if (ext === '.pdf') {
+            tipoDoc = DocumentoTipo.ANEXO;
+            mime = 'application/pdf';
+          }
+
+          // Guardar registro Documento en BD; ruta_archivo apunta al objectKey en MinIO
+          await this.documentoRepo.save({
+            modulo: savedModulo,
+            nombre: elemento,
+            tipo: tipoDoc,
+            version: 1,
+            ruta_archivo: objectKey, // guardamos la key dentro del bucket
+            mime_type: mime,
+          });
+
+          
+        }
+      }
+    };
+
+    // Ejecutar procesamiento desde basePath
+    await procesarCarpeta(basePath, codigoExpediente);
+
+    return {
+      message: `Expediente "${savedExpediente.nombre}" importado correctamente y subido a MinIO`,
+      expedienteId: savedExpediente.id,
+      bucket,
+      baseKey: expedienteBaseKey,
+    };
+  } finally {
+    // Eliminar directorio temporal siempre
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch (e) {
+      // No bloquear si falla limpieza
+      console.warn('No se pudo eliminar temporal:', tmpDir, e);
+    }
+  }
 }
 
   //console.log('HTML a procesar:', html.substring(0, 7000));

@@ -37,11 +37,6 @@ export class ModulosController {
           description: 'ID del expediente al que pertenece el módulo',
           example: 'f64a8e12-9f1a-44a1-a9e7-91dfb39bcd10',
         },
-        numero: {
-          type: 'integer',
-          description: 'Número de orden del módulo dentro del expediente',
-          example: 1,
-        },
         titulo: {
           type: 'string',
           description: 'Título o nombre descriptivo del módulo',
@@ -109,7 +104,6 @@ export class ModulosController {
     schema: {
       type: 'object',
       properties: {
-        numero: { type: 'integer', example: 2 },
         titulo: { type: 'string', example: 'Marco Normativo Actualizado' },
         descripcion: { type: 'string', example: 'Incluye legislación vigente hasta 2025' },
         estado: {

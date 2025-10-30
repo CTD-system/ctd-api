@@ -6,9 +6,7 @@ export class CreateModuloDto {
   @IsUUID()
   expediente_id: string;
 
-  @IsNotEmpty()
-  @IsInt()
-  numero: number;
+  
 
   @IsOptional()
   crearReferenciasWord?: boolean;

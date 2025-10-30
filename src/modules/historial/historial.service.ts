@@ -20,6 +20,17 @@ export class HistorialService {
     private readonly userRepo: Repository<User>,
   ) {}
 
+  async deleteByDocumentoId(documento_id: string) {
+  await this.historialRepo
+    .createQueryBuilder()
+    .delete()
+    .from(HistorialDocumento)
+    .where('documentoId = :documento_id', { documento_id })
+    .execute();
+}
+
+
+
   // Crear registro en el historial
   async create(createDto: CreateHistorialDto) {
     const { documento_id, version, accion, usuario_id, comentario } = createDto;

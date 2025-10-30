@@ -13,7 +13,7 @@ import { Modulo } from '../modulos/entities/modulo.entity';
 import { Documento } from '../documentos/entities/documento.entity';
 import { MinioService } from '../minio.service';
 import path from 'path';
-
+import * as fs from 'fs';
 @Injectable()
 export class ExpedientesService {
   constructor(
@@ -74,7 +74,7 @@ export class ExpedientesService {
     }
     await this.minioService.createFolder(
       'ctd-expedientes',
-      `expedientes/${codigo}`,
+      `expedientes/${nombre}`,
     );
     return saved;
   }
@@ -82,7 +82,7 @@ export class ExpedientesService {
   // Obtener todos los expedientes
   async findAll() {
     return this.expedienteRepo.find({
-      relations: ['creado_por', 'modulos'],
+      relations: ['creado_por', 'modulos','modulos.moduloContenedor'],
       order: { creado_en: 'DESC' },
     });
   }
@@ -154,48 +154,95 @@ export class ExpedientesService {
     };
   }
 
-  async asignarModulo(expedienteId: string, moduloId: string) {
-    const expediente = await this.expedienteRepo.findOne({
-      where: { id: expedienteId },
-      relations: ['modulos'],
-    });
-    if (!expediente) throw new Error('Expediente no encontrado');
 
-    const modulo = await this.moduloRepo.findOne({
-      where: { id: moduloId },
-      relations: ['documentos'],
-    });
-    if (!modulo) throw new Error('Módulo no encontrado');
 
-    // 🔹 Asignar expediente al módulo
-    modulo.expediente = expediente;
+async asignarModulo(expedienteId: string, moduloId: string) {
+  const bucket = 'ctd-expedientes';
 
-    // 🔹 Construir ruta dentro del expediente
-    const baseRuta = `expedientes/${expediente.codigo}`;
-    modulo.ruta = `${baseRuta}/${modulo.titulo}`;
+  // 🔹 1. Buscar expediente destino
+  const expediente = await this.expedienteRepo.findOne({
+    where: { id: expedienteId },
+    relations: ['modulos'],
+  });
+  if (!expediente) throw new NotFoundException('Expediente no encontrado.');
 
-    await this.moduloRepo.save(modulo);
+  // 🔹 2. Buscar módulo origen con sus relaciones
+  const modulo = await this.moduloRepo.findOne({
+    where: { id: moduloId },
+    relations: [
+      'expediente',
+      'documentos',
+      'submodulos',
+      'submodulos.documentos',
+      'moduloContenedor',
+    ],
+  });
+  if (!modulo) throw new NotFoundException('Módulo no encontrado.');
 
-    // 🔹 Crear carpeta del módulo en MinIO
-    await this.minioService.createFolder('ctd-expedientes', modulo.ruta);
+  const rutaOrigen = modulo.ruta;
+  const nuevaRuta = `expedientes/${expediente.codigo}/${modulo.titulo}`.replace(/\\/g, '/');
 
-    // 🔹 Actualizar documentos asociados con la nueva ruta del módulo
-    for (const doc of modulo.documentos) {
-      if (doc.ruta_archivo) {
-        const fileName = path.basename(doc.ruta_archivo);
-        const destinoMinio = `${modulo.ruta}/${fileName}`;
-        await this.minioService.uploadFile(
-          'ctd-expedientes',
-          destinoMinio,
-          doc.ruta_archivo,
-        );
-      }
+  // 🔹 3. Mover los archivos dentro del bucket (sin descargarlos)
+  const objetos = await this.minioService.listFilesByPrefix(bucket, rutaOrigen + '/');
+
+  for (const oldPath of objetos) {
+    const relative = oldPath.replace(rutaOrigen + '/', '');
+    const newPath = `${nuevaRuta}/${relative}`;
+    await this.minioService.ensureBucket(bucket);
+
+    // Copiar dentro del bucket
+    await this.minioService['minioClient'].copyObject(
+      bucket,
+      newPath,
+      `/${bucket}/${oldPath}`,
+    );
+
+    // Eliminar el original
+    await this.minioService.removeObject(bucket, oldPath);
+  }
+
+  // 🔹 4. Actualizar recursivamente los módulos y documentos
+  const actualizarModuloRecursivo = async (mod: Modulo, parentRuta: string) => {
+    mod.expediente = expediente;
+    mod.ruta = `${parentRuta}/${mod.titulo}`.replace(/\\/g, '/');
+    await this.moduloRepo.save(mod);
+
+    for (const doc of mod.documentos ?? []) {
+      const fileName = path.basename(doc.ruta_archivo);
+      doc.ruta_archivo = `${mod.ruta}/${fileName}`;
+      await this.documentoRepo.save(doc);
     }
 
-    return {
-      message: `Módulo "${modulo.titulo}" asignado al expediente "${expediente.codigo}" correctamente.`,
-    };
+    const submodulos = await this.moduloRepo.find({
+      where: { moduloContenedor: { id: mod.id } },
+      relations: ['documentos'],
+    });
+
+    for (const sub of submodulos) {
+      await actualizarModuloRecursivo(sub, mod.ruta);
+    }
+  };
+
+  await actualizarModuloRecursivo(modulo, `expedientes/${expediente.codigo}`);
+
+  // 🔹 5. Crear la nueva carpeta en MinIO (si no existe)
+  await this.minioService.createFolder(bucket, nuevaRuta);
+
+  // 🔹 6. Eliminar la carpeta original vacía
+  try {
+    await this.minioService.removeFolder(bucket, rutaOrigen + '/');
+  } catch (err) {
+    console.warn('⚠️ No se pudo eliminar carpeta origen:', err?.message || err);
   }
+
+  return {
+    message: `📦 Módulo "${modulo.titulo}" movido y asignado al expediente "${expediente.codigo}" correctamente.`,
+    nuevaRuta,
+  };
+}
+
+
+
 
   async eliminarEnCascada(id: string) {
   const expediente = await this.expedienteRepo.findOne({

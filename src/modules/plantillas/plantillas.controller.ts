@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Delete, Put, Query, NotFoundException, UnauthorizedException, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Delete, Put, Query, NotFoundException, UnauthorizedException, UseGuards, Patch } from '@nestjs/common';
 import { PlantillasService } from './plantillas.service';
 import { PlantillaDTO } from './dto/create-plantilla.dto';
 import { UpdatePlantillaDto } from './dto/update-plantilla.dto';
@@ -68,7 +68,7 @@ return this.plantillasService.create(createPlantillaDTO, user.id);
   }
 
   // Actualizar una plantilla
-  @Put(':id')
+  @Patch(':id')
   @ApiOperation({ summary: 'Actualizar una plantilla existente' })
   @ApiResponse({
     status: 200,
@@ -81,7 +81,7 @@ return this.plantillasService.create(createPlantillaDTO, user.id);
   })
   async update(
     @Param('id') id: string,
-    @Body() updatePlantillaDTO: UpdatePlantillaDto,
+    @Body() updatePlantillaDTO: Partial<UpdatePlantillaDto>,
   ): Promise<PlantillaDTO> {
     return this.plantillasService.update(id, updatePlantillaDTO);
   }

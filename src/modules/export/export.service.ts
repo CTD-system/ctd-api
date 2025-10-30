@@ -14,6 +14,7 @@ import * as path from 'path';
 import archiver from 'archiver';
 import { MinioService } from '../minio.service';
 import express from 'express';
+import { Modulo } from '../modulos/entities/modulo.entity';
 @Injectable()
 export class ExportService {
   constructor(
@@ -21,6 +22,8 @@ export class ExportService {
     private expedienteRepo: Repository<Expediente>,
     @InjectRepository(Documento)
     private documentoRepo: Repository<Documento>,
+    @InjectRepository(Modulo)
+    private moduloRepo: Repository<Modulo>,
     @InjectRepository(Plantilla)
     private plantillaRepo: Repository<Plantilla>,
     private readonly minioService: MinioService,
@@ -63,7 +66,7 @@ export class ExportService {
 
       // 🧾 index.xml con metadatos del módulo
       const indexContent = `<modulo>
-  <numero>${modulo.numero}</numero>
+ 
   <titulo>${modulo.titulo}</titulo>
   <descripcion>${modulo.descripcion ?? ''}</descripcion>
   <estado>${modulo.estado}</estado>
@@ -104,11 +107,75 @@ export class ExportService {
   }
 
   // 📄 Exportar un solo documento
-  async exportarDocumento(id: string) {
-    const documento = await this.documentoRepo.findOne({ where: { id } });
-    if (!documento) throw new NotFoundException('Documento no encontrado');
-    return documento;
+  async exportarDocumento(documentoId: string, res: express.Response) {
+  if (!documentoId) {
+    throw new BadRequestException('Se requiere el ID del documento.');
   }
+
+  const bucket = 'ctd-expedientes';
+  const tmpDir = path.join('downloads', 'documentos', documentoId);
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  try {
+    // 1️⃣ Buscar documento en BD con sus relaciones
+    const documento = await this.documentoRepo.findOne({
+      where: { id: documentoId },
+      relations: ['modulo', 'modulo.expediente'],
+    });
+
+    if (!documento) {
+      throw new NotFoundException('Documento no encontrado.');
+    }
+
+    if (!documento.ruta_archivo) {
+      throw new BadRequestException('El documento no tiene una ruta asociada en MinIO.');
+    }
+
+    const expediente = documento.modulo?.expediente;
+    const safeDocName = this.limpiarNombre(documento.nombre || `documento_${documento.id}`);
+    const safeExpName = expediente ? this.limpiarNombre(expediente.nombre) : 'sin_expediente';
+    const safeModuloName = documento.modulo
+      ? this.limpiarNombre(documento.modulo.titulo)
+      : 'sin_modulo';
+
+    // 2️⃣ Crear subcarpetas tipo: /downloads/documentos/<expediente>/<modulo>/
+    const destinoDir = path.join(tmpDir, safeExpName, safeModuloName);
+    fs.mkdirSync(destinoDir, { recursive: true });
+
+    // 3️⃣ Descargar archivo desde MinIO
+    const fileName = path.basename(documento.ruta_archivo);
+    const destinoPath = path.join(destinoDir, fileName);
+    await this.minioService.downloadFile(bucket, documento.ruta_archivo, destinoPath);
+
+    // 4️⃣ Generar ZIP del documento
+    const zipName = `${safeDocName}.zip`;
+    const zipPath = path.join('downloads', zipName);
+
+    const output = fs.createWriteStream(zipPath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+
+    archive.pipe(output);
+    archive.directory(tmpDir, safeDocName);
+    await archive.finalize();
+
+    // Esperar a que termine el ZIP
+    await new Promise<void>((resolve, reject) => {
+      output.on('close', () => resolve());
+      output.on('error', reject);
+    });
+
+    // 5️⃣ Enviar al cliente
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
+
+    const stream = fs.createReadStream(zipPath);
+    stream.pipe(res);
+  } catch (error) {
+    console.error('❌ Error al exportar documento:', error);
+    throw new InternalServerErrorException('Error al exportar el documento.');
+  }
+}
+
 
   async descargarExpedienteCompleto(
     expedienteId: string,
@@ -184,4 +251,87 @@ export class ExportService {
       );
     }
   }
+
+  async descargarModuloCompleto(moduloId: string, res: express.Response) {
+  if (!moduloId) {
+    throw new BadRequestException('Se requiere el ID del módulo.');
+  }
+
+  const tmpDir = path.join('downloads', 'modulos', moduloId);
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  try {
+    const modulo = await this.moduloRepo.findOne({
+      where: { id: moduloId },
+      relations: ['documentos','expediente'],
+    });
+
+    if (!modulo) {
+      throw new NotFoundException('Módulo no encontrado.');
+    }
+
+    if (!modulo.ruta) {
+      throw new BadRequestException('El módulo no tiene una ruta asociada.');
+    }
+
+    const expediente = modulo.expediente;
+    const bucket = 'ctd-expedientes';
+
+    // Ejemplo: expedientes/EXP-2025-001/modulos/Modulo_A
+    const prefix = modulo.ruta.endsWith('/')
+      ? modulo.ruta
+      : `${modulo.ruta}/`;
+
+    // 🔍 Listar todos los objetos del módulo en MinIO
+    const archivos = await this.minioService.listFilesByPrefix(bucket, prefix);
+
+    if (!archivos || archivos.length === 0) {
+      throw new NotFoundException(
+        'No se encontraron archivos para este módulo en MinIO.',
+      );
+    }
+
+    // 📥 Descargar todos los archivos localmente respetando estructura
+    for (const file of archivos) {
+      if (file.endsWith('/')) continue;
+
+      const relativePath = file.substring(prefix.length);
+      if (!relativePath) continue;
+
+      const filePath = path.join(tmpDir, relativePath);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+
+      await this.minioService.downloadFile(bucket, file, filePath);
+    }
+
+    // 📦 Comprimir el módulo en ZIP
+    const safeModuloNombre = this.limpiarNombre(modulo.titulo || `modulo_${modulo.id}`);
+    const zipName = `${safeModuloNombre}.zip`;
+    const zipPath = path.join('downloads', zipName);
+
+    const output = fs.createWriteStream(zipPath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+
+    archive.pipe(output);
+    archive.directory(tmpDir, safeModuloNombre);
+    await archive.finalize();
+
+    // Esperar a que termine el ZIP
+    await new Promise<void>((resolve, reject) => {
+      output.on('close', () => resolve());
+      output.on('error', reject);
+    });
+
+    // 📤 Enviar al cliente
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
+
+    const stream = fs.createReadStream(zipPath);
+    stream.pipe(res);
+  } catch (error) {
+    console.error('❌ Error al generar ZIP del módulo:', error);
+    throw new InternalServerErrorException('Error al generar el ZIP del módulo.');
+  }
+}
+
 }

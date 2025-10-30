@@ -22,8 +22,6 @@ export class Modulo {
   @OneToMany(() => Modulo, modulo => modulo.moduloContenedor)
   submodulos: Modulo[];
 
-  @Column()
-  numero: number;
 
   @Column()
   titulo: string;

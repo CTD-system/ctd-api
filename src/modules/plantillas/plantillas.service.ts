@@ -68,7 +68,7 @@ export class PlantillasService {
   // Actualizar una plantilla
   async update(
     id: string,
-    updatePlantillaDTO: UpdatePlantillaDto,
+    updatePlantillaDTO: Partial<UpdatePlantillaDto>,
   ): Promise<PlantillaDTO> {
     const plantilla = await this.plantillaRepository.findOne({
       where: { id },

@@ -18,6 +18,27 @@ export class MinioDownloadController {
     private readonly exportService: ExportService,
   ) {}
 
+  // 🧾 Exportar y descargar un documento individual como ZIP (descargado desde MinIO)
+  @Get('documento-zip/:documentoId')
+  @ApiOperation({
+    summary:
+      'Descargar un documento individual (extraído desde MinIO) como ZIP con estructura',
+  })
+  @ApiParam({
+    name: 'documentoId',
+    example: 'b1d0c3a2-5ef7-4f7e-a1bb-53b99b3d2df1',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Documento descargado correctamente como ZIP.',
+  })
+  async descargarDocumentoCompleto(
+    @Param('documentoId') documentoId: string,
+    @Res() res: express.Response,
+  ) {
+    return this.exportService.exportarDocumento(documentoId, res);
+  }
+
   @Get('expediente/:filename')
   @ApiOperation({
     summary: 'Descargar un expediente ZIP directamente desde MinIO',
@@ -62,26 +83,6 @@ export class MinioDownloadController {
     );
   }
 
-  @Get('documento/:filename')
-  @ApiOperation({
-    summary: 'Descargar un documento individual desde MinIO (no ZIP)',
-  })
-  @ApiParam({ name: 'filename', example: 'informe_final.docx' })
-  async descargarDocumento(
-    @Param('filename') filename: string,
-    @Res() res: express.Response,
-  ) {
-    if (filename.endsWith('.zip')) {
-      throw new BadRequestException(
-        'Los documentos no pueden ser archivos ZIP.',
-      );
-    }
-    return this.minioDownloadService.descargarArchivo(
-      'ctd-imports',
-      filename,
-      res,
-    );
-  }
 
   @Get('expediente-zip/:expedienteId')
   @ApiOperation({
@@ -98,4 +99,24 @@ export class MinioDownloadController {
   ) {
     return this.exportService.descargarExpedienteCompleto(expedienteId, res);
   }
+
+  @Get('modulo-zip/:moduloId')
+  @ApiOperation({
+    summary:
+      'Descargar todo un módulo (con estructura y documentos) como ZIP desde MinIO',
+  })
+  @ApiParam({
+    name: 'moduloId',
+    example: 'a6d86b3c-20fd-4b7a-b91e-3e0847c0e1b1',
+  })
+  async descargarModuloCompleto(
+    @Param('moduloId') moduloId: string,
+    @Res() res: express.Response,
+  ) {
+    return this.exportService.descargarModuloCompleto(moduloId, res);
+  }
+
+  
+
+  
 }

@@ -42,8 +42,10 @@ export class Documento {
   @UpdateDateColumn({ type: 'timestamp' })
   actualizado_en: Date;
 
-  @OneToMany(() => HistorialDocumento, historial => historial.documento)
-  historial: HistorialDocumento[];
+ @OneToMany(() => HistorialDocumento, historial => historial.documento, {
+  cascade: true,
+})
+historial: HistorialDocumento[];
 
   // Relación de anexos
   @ManyToMany(() => Documento)

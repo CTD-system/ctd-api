@@ -19,7 +19,7 @@ import {
 } from 'docx';
 import PDFDocument from 'pdfkit';
 import * as path from 'path';
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Documento, DocumentoTipo } from './entities/documento.entity';
@@ -35,6 +35,7 @@ import { Plantilla } from '../plantillas/entities/plantilla.entity';
 import * as os from 'os';
 import { estructuraToDocxChildren } from 'src/utils/plantillas/convert-Json-to-Docxs';
 import JSZip from 'jszip';
+import { MinioUploadService } from '../import/minio-upload.service';
 @Injectable()
 export class DocumentosService {
   constructor(
@@ -52,6 +53,7 @@ export class DocumentosService {
 
     private readonly historialService: HistorialService, // ✅ inyección del historial
     private readonly minioService: MinioService,
+    private readonly uploadMinioService: MinioUploadService,
     private readonly modulosService: ModulosService,
   ) {}
 
@@ -632,29 +634,27 @@ export class DocumentosService {
 
   
 
-async  createFromPlantilla(createDto: CreateDocumentoDto & { plantilla_id: string }) {
+async createFromPlantilla(createDto: CreateDocumentoDto & { plantilla_id: string }) {
   const { plantilla_id, modulo_id, subido_por, anexos, ...rest } = createDto;
 
-  // 1️⃣ Buscar plantilla
+  // 🔹 1) Buscar plantilla
   const plantilla = await this.plantillaRepo.findOne({
-    where: { id: plantilla_id },
-    relations: ['documento'],
+    where: { id: plantilla_id }
   });
   if (!plantilla) throw new NotFoundException('Plantilla no encontrada.');
 
-  // 2️⃣ Buscar módulo
+  // 🔹 2) Buscar módulo
   const modulo = await this.moduloRepo.findOne({ where: { id: modulo_id } });
   if (!modulo) throw new NotFoundException('Módulo no encontrado.');
 
-  // 3️⃣ Buscar usuario
+  // 🔹 3) Asignar usuario subido_por desde @CurrentUser
   let user: User | undefined = undefined;
-    if (subido_por) {
-      const foundUser = await this.userRepo.findOne({
-        where: { id: subido_por },
-      });
-      if (!foundUser) throw new NotFoundException('Usuario no encontrado.');
-      user = foundUser;
-    }
+  if (subido_por) {
+    const foundUser = await this.userRepo.findOne({ where: { id: subido_por } });
+    if (!foundUser) throw new NotFoundException('Usuario no encontrado.');
+    user = foundUser;
+  }
+
 
   // 4️⃣ Buscar anexos
   let anexosDocs: Documento[] = [];
@@ -752,68 +752,153 @@ console.log("CHILDREN",children)
   async findOne(id: string) {
     const doc = await this.documentoRepo.findOne({
       where: { id },
-      relations: ['modulo', 'subido_por'],
+      relations: ['modulo', 'subido_por','documento_anexos'],
     });
     if (!doc) throw new NotFoundException('Documento no encontrado.');
     return doc;
   }
 
   // Actualizar documento (incrementa versión y registra historial)
-  async update(id: string, updateDto: UpdateDocumentoDto) {
-    const documento = await this.documentoRepo.findOne({ where: { id } });
-    if (!documento) throw new NotFoundException('Documento no encontrado.');
+  async patch(id: string, updateDto: Partial<UpdateDocumentoDto>) {
+  const documento = await this.documentoRepo.findOne({ where: { id } });
+  if (!documento) throw new NotFoundException('Documento no encontrado.');
 
-    Object.assign(documento, updateDto);
-    documento.version = (documento.version || 0) + 1; // ✅ incremento de versión
+  // Actualiza solo los campos que estén presentes en updateDto
+  Object.assign(documento, updateDto);
+  documento.version = (documento.version || 0) + 1; // incremento de versión
 
-    const updated = await this.documentoRepo.save(documento);
+  const updated = await this.documentoRepo.save(documento);
 
-    // Subir archivo actualizado a MinIO si hay ruta de archivo
-    if (updated.ruta_archivo && updated.nombre) {
-      try {
-        await this.minioService.uploadFile(
-          'ctd-documentos',
-          updated.nombre,
-          updated.ruta_archivo,
-        );
-      } catch (e) {
-        // Manejar error de subida a MinIO (opcional: log)
-      }
-    }
 
-    // ✅ Registrar historial automático
-    await this.historialService.create({
-      documento_id: updated.id,
-      version: updated.version,
-      accion: HistorialAccion.MODIFICADO,
-      usuario_id: updateDto.subido_por,
-      comentario: 'Documento actualizado automáticamente.',
-    });
+  // Registrar historial automático
+  await this.historialService.create({
+    documento_id: updated.id,
+    version: updated.version,
+    accion: HistorialAccion.MODIFICADO,
+    usuario_id: updateDto.subido_por,
+    comentario: 'Documento actualizado automáticamente.',
+  });
 
-    return updated;
+  return updated;
+}
+
+
+  
+  // Eliminar documento y su historial, además de MinIO
+async remove(id: string) {
+  // 1️⃣ Buscar documento
+  const documento = await this.documentoRepo.findOne({
+    where: { id },
+    relations: ['historial', 'subido_por'],
+  });
+  if (!documento) throw new NotFoundException('Documento no encontrado.');
+
+  // 2️⃣ Eliminar historial asociado
+  if (documento.historial && documento.historial.length > 0) {
+    await this.historialService.deleteByDocumentoId(documento.id);
   }
 
-  // Eliminar documento (y registrar historial)
-  async remove(id: string) {
-    const documento = await this.documentoRepo.findOne({ where: { id } });
-    if (!documento) throw new NotFoundException('Documento no encontrado.');
-    // Eliminar de MinIO si existe
+  // 3️⃣ Eliminar archivo de MinIO
+  if (documento.ruta_archivo) {
     try {
-      await this.minioService.removeObject('ctd-documentos', documento.nombre);
-    } catch (e) {
-      // Si no existe en MinIO, continuar
+      await this.minioService.removeObject('ctd-expedientes', documento.ruta_archivo);
+    } catch (err) {
+      console.warn('No se pudo eliminar el archivo de MinIO', err);
     }
-    await this.documentoRepo.remove(documento);
+  }
 
-    // ✅ Registrar historial automático
-    await this.historialService.create({
-      documento_id: id,
-      version: documento.version,
-      accion: HistorialAccion.ELIMINADO,
-      usuario_id: documento.subido_por?.id,
-      comentario: 'Documento eliminado del sistema y de MinIO.',
+  // 4️⃣ Eliminar documento de la base de datos
+  await this.documentoRepo.remove(documento);
+
+  // 5️⃣ Registrar la eliminación en un log separado (opcional)
+  console.log(`Documento ${documento.id} eliminado correctamente.`);
+
+  return { message: 'Documento y su historial eliminados correctamente.' };
+}
+
+
+
+
+
+  /**
+   * 🔹 Descarga un documento desde MinIO (como hace exportarDocumento)
+   * y lo procesa con extraerConfiguracionPlantillaWord para generar una plantilla,
+   * sea cual sea su tipo original.
+   */
+  async generarPlantillaDesdeDocumento(documentoId: string) {
+    const bucket = 'ctd-expedientes';
+
+    // 1️⃣ Buscar documento
+    const documento = await this.documentoRepo.findOne({
+      where: { id: documentoId },
+      relations: ['modulo', 'modulo.expediente', 'subido_por'],
+    });
+    if (!documento) throw new NotFoundException('Documento no encontrado.');
+
+    if (!documento.ruta_archivo) {
+      throw new BadRequestException('El documento no tiene ruta asociada en MinIO.');
+    }
+
+    const expediente = documento.modulo?.expediente;
+    const safeDocName = this.limpiarNombre(documento.nombre || `documento_${documento.id}`);
+    const safeExpName = expediente ? this.limpiarNombre(expediente.nombre) : 'sin_expediente';
+    const safeModuloName = documento.modulo
+      ? this.limpiarNombre(documento.modulo.titulo)
+      : 'sin_modulo';
+
+    // 2️⃣ Crear directorios temporales
+    const tmpRoot = path.join(os.tmpdir(), 'procesar_docs');
+    const tmpDir = path.join(tmpRoot, documentoId, safeExpName, safeModuloName);
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    // 3️⃣ Descargar archivo desde MinIO
+    const fileName = path.basename(documento.ruta_archivo);
+    const destinoPath = path.join(tmpDir, fileName);
+
+    try {
+      await this.minioService.downloadFile(bucket, documento.ruta_archivo, destinoPath);
+    } catch (err) {
+      console.error('❌ Error al descargar el archivo desde MinIO:', err);
+      throw new InternalServerErrorException('No se pudo descargar el archivo desde MinIO.');
+    }
+
+    // 4️⃣ Procesar el archivo (Word) con extraerConfiguracionPlantillaWord
+    let config :Partial<Plantilla>
+    try {
+       config = await this.uploadMinioService.extraerConfiguracionPlantillaWord(destinoPath);
+    } catch (err) {
+      console.error('❌ Error procesando documento con extraerConfiguracionPlantillaWord:', err);
+      throw new InternalServerErrorException('No se pudo procesar el documento como plantilla.');
+    }
+
+    
+
+    // 5️⃣ Crear nueva plantilla con la configuración extraída
+    const plantilla = this.plantillaRepo.create({
+      nombre: `Plantilla_${safeDocName}`,
+      descripcion: `Plantilla generada desde documento ${documento.nombre}`,
+      tipo_archivo: documento.mime_type,
+      creado_por: documento.subido_por.id
+        ? ({ id: documento.subido_por.id } as any)
+        : undefined,
+      ...config,
     });
 
-    return { message: 'Documento eliminado correctamente.' };
+    await this.plantillaRepo.save(plantilla);
+
+    return {
+      message: `✅ Plantilla generada correctamente desde el documento "${documento.nombre}".`,
+      plantillaId: plantilla.id,
+      nombre: plantilla.nombre,
+    };
+  }
+
+  private limpiarNombre(nombre: string): string {
+    return nombre
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9-_]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_+|_+$/g, '');
   }
 }

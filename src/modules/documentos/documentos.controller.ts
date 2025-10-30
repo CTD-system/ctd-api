@@ -8,6 +8,8 @@ import {
   Delete,
   UploadedFile,
   UseInterceptors,
+  UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
 import { DocumentosService } from './documentos.service';
 import { CreateDocumentoDto } from './dto/create-documento.dto';
@@ -20,14 +22,42 @@ import {
   ApiResponse,
   ApiConsumes,
   ApiParam,
+  ApiBearerAuth,
 } from '@nestjs/swagger';
+import { CurrentUser } from 'src/decorators/current-user.decorator';
+import { User } from '../users/entities/user.entity';
+import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
 
 @ApiTags('Documentos')
+@ApiBearerAuth()
 @Controller('documentos')
 export class DocumentosController {
   constructor(private readonly documentosService: DocumentosService) {}
 
+  @UseGuards(JwtAuthGuard)
+  @Post('generar-plantilla/:documentoId')
+  @ApiOperation({
+    summary:
+      'Generar una plantilla en base a un documento existente descargado desde MinIO',
+  })
+  @ApiParam({
+    name: 'documentoId',
+    description: 'ID del documento en la base de datos',
+    example: 'uuid-del-documento',
+  })
+  @ApiResponse({
+    status: 201,
+    description:
+      'Plantilla generada correctamente desde el documento especificado',
+  })
+  async generarPlantillaDesdeDocumento(
+    @Param('documentoId') documentoId: string,
+  ) {
+    return this.documentosService.generarPlantillaDesdeDocumento(documentoId);
+  }
+
   // 📄 Crear documento Word desde plantilla existente
+  @UseGuards(JwtAuthGuard)
   @Post('word/from-plantilla/:plantillaId')
   @ApiOperation({
     summary: 'Crear un documento Word a partir de una plantilla seleccionada',
@@ -45,7 +75,6 @@ export class DocumentosController {
 
         modulo_id: { type: 'string', format: 'uuid', nullable: true },
 
-        subido_por: { type: 'string', format: 'uuid', nullable: true },
         anexos: {
           type: 'array',
           items: { type: 'string', format: 'uuid' },
@@ -57,12 +86,17 @@ export class DocumentosController {
   async crearDesdePlantilla(
     @Param('plantillaId') plantillaId: string,
     @Body() body: CreateDocumentoDto,
+    @CurrentUser() user: User,
   ) {
+     if (!user || !user.id) {
+    throw new UnauthorizedException('Usuario no autenticado');
+  }
     // Mapear plantillaId al DTO
-    const createDto: CreateDocumentoDto & { plantilla_id: string } = {
-      ...body,
-      plantilla_id: plantillaId,
-    };
+    const createDto: CreateDocumentoDto & { plantilla_id: string; subido_por: string } = {
+    ...body,
+    plantilla_id: plantillaId,
+    subido_por: user.id,   // ✅ Pasamos el user.id al servicio
+  };
 
     return this.documentosService.createFromPlantilla(createDto);
   }
@@ -117,8 +151,8 @@ export class DocumentosController {
     status: 200,
     description: 'Documento actualizado correctamente',
   })
-  update(@Param('id') id: string, @Body() dto: UpdateDocumentoDto) {
-    return this.documentosService.update(id, dto);
+  update(@Param('id') id: string, @Body() dto: Partial<UpdateDocumentoDto>) {
+    return this.documentosService.patch(id, dto);
   }
 
   // 📄 Eliminar documento
