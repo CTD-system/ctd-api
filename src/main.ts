@@ -28,7 +28,7 @@ async function bootstrap() {
       operationsSorter: 'alpha', // Opcional: ordena alfabéticamente los endpoints
       tagsSorter: 'alpha', // Opcional: ordena las tags alfabéticamente
     },
-  }); // ruta: http://localhost:4000/api/docs
+  }); // ruta: http://localhost:4000/ctd/docs
 
   await app.listen(process.env.APP_PORT || 4000);
 }
