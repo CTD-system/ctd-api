@@ -879,7 +879,7 @@ async remove(id: string) {
       descripcion: `Plantilla generada desde documento ${documento.nombre}`,
       tipo_archivo: documento.mime_type,
       creado_por: documento.subido_por.id
-        ? ({ id: documento.subido_por.id } as any)
+        ? ({ id: documento.subido_por.id } as User)
         : undefined,
       ...config,
     });

@@ -16,7 +16,7 @@ import {
 } from 'docx';
 import * as fs from 'fs';
 import * as path from 'path';
-
+import sizeOf from 'image-size';
 // 🔹 Limpia caracteres no válidos para Word
 const sanitize = (text: string = ''): string =>
   text.replace(/[^\x09\x0A\x0D\x20-\x7E\xA0-\uFFFF]/g, '');
@@ -407,32 +407,51 @@ export function estructuraToDocxChildren(estructura: any): any[] {
         }
 
         // ------------------ IMAGEN ------------------
-        case 'imagen':
-          if (bloque.src && fs.existsSync(bloque.src)) {
-            const imgBuffer = fs.readFileSync(bloque.src);
-            const ext = path.extname(bloque.src).toLowerCase().replace('.', '');
-            const tipo =
-              ext === 'jpg' || ext === 'jpeg'
-                ? 'image/jpeg'
-                : ext === 'png'
-                  ? 'image/png'
-                  : 'image/jpeg';
+    
+case 'imagen':
+  if (bloque.src) {
+    let imgBuffer: Buffer | null = null;
+    let tipo: 'png' | 'jpg' = 'png';
 
-            children.push(
-              new Paragraph({
-                alignment: AlignmentType.CENTER,
-                children: [
-                  new ImageRun({
-                    data: imgBuffer as Buffer,
-                    transformation: { width: 400, height: 300 },
-                    type: tipo as 'png' | 'jpg',
-                  }),
-                ],
-                spacing: { before: 150, after: 150 },
-              }),
-            );
-          }
-          break;
+    // 📌 Si es un data URI (base64)
+    const dataUriMatch = bloque.src.match(/^data:image\/(png|jpeg|jpg);base64,(.*)$/);
+    if (dataUriMatch) {
+      const ext = dataUriMatch[1];
+      const base64Data = dataUriMatch[2];
+      imgBuffer = Buffer.from(base64Data, 'base64');
+      tipo = ext === 'jpeg' || ext === 'jpg' ? 'jpg' : 'png';
+    } 
+    // 📌 Si es ruta de archivo local
+    else if (fs.existsSync(bloque.src)) {
+      imgBuffer = fs.readFileSync(bloque.src);
+      const ext = path.extname(bloque.src).toLowerCase().replace('.', '');
+      tipo = ext === 'jpg' || ext === 'jpeg' ? 'jpg' : 'png';
+    }
+
+    if (imgBuffer) {
+      // ✅ Obtener dimensiones reales de la imagen
+      const dimensions = sizeOf(imgBuffer);
+
+      children.push(
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          children: [
+            new ImageRun({
+              data: imgBuffer,
+              type: tipo,
+              transformation: {
+                width: dimensions.width || 100,   // fallback por si falla
+                height: dimensions.height || 100, // fallback por si falla
+              },
+            }),
+          ],
+          spacing: { before: 150, after: 150 },
+        }),
+      );
+    }
+  }
+  break;
+
 
         // ------------------ BLOQUE DESCONOCIDO ------------------
         default:

@@ -4,11 +4,13 @@ import {
   Param,
   Res,
   BadRequestException,
+  Query,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
 import { ExportService } from './export.service';
 import { MinioDownloadService } from './minio-download.service';
 import express from 'express';
+import { MinioService } from '../minio.service';
 
 @ApiTags('MinIO - Descarga directa')
 @Controller('minio-download')
@@ -16,7 +18,30 @@ export class MinioDownloadController {
   constructor(
     private readonly minioDownloadService: MinioDownloadService,
     private readonly exportService: ExportService,
+    private readonly minioService : MinioService
   ) {}
+
+
+  @Get('bloques/imagen')
+async getImagen(
+  @Query('key') key: string,
+  @Res() res: express.Response
+) {
+  return this.exportService.descargarImagenIndividual(
+    'ctd-imagenes',
+    key,
+    res
+  );
+}
+
+@Get('bloques/imagen-url')
+async getImagenUrl(@Query('key') key: string) {
+  const bucket = 'ctd-imagenes';
+  const url = await this.minioService.getPublicUrl(bucket, key);
+  return { url };
+}
+
+
 
   // 🧾 Exportar y descargar un documento individual como ZIP (descargado desde MinIO)
   @Get('documento-zip/:documentoId')

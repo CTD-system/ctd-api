@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { Client } from 'minio';
 
 @Injectable()
@@ -16,11 +16,30 @@ export class MinioService {
     });
   }
 
+  
+
   async uploadFile(bucket: string, fileName: string, filePath: string, metaData: Record<string, any> = {}) {
     await this.ensureBucket(bucket);
     this.logger.log(`Subiendo archivo ${fileName} al bucket ${bucket}`);
     return this.minioClient.fPutObject(bucket, fileName, filePath, metaData);
   }
+
+    /**
+   * Devuelve la URL pública directa del objeto
+   */
+ async getPublicUrl(bucket: string, objectKey: string, expires = 60 * 60): Promise<string> {
+  // expires = tiempo en segundos (por defecto 1 hora)
+  try {
+    const url = await this.minioClient.presignedUrl('GET', bucket, objectKey, expires);
+    return url;
+  } catch (error) {
+    console.error('❌ Error generando URL pública:', error);
+    throw new InternalServerErrorException('No se pudo generar la URL pública del archivo');
+  }
+}
+
+
+
 
    async uploadExpedienteFile(
     expedienteCodigo: string,

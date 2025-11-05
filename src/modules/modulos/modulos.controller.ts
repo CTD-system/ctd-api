@@ -173,4 +173,11 @@ export class ModulosController {
   ) {
     return this.modulosService.editarReferenciasWord(moduloId, referencias);
   }
+
+
+  @Get(':id/referencias-word')
+async getReferencias(@Param('id') id: string) {
+  return this.modulosService.obtenerReferenciasWord(id);
+}
+
 }

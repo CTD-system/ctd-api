@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  HttpException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
@@ -38,6 +39,37 @@ export class ExportService {
       .replace(/\s+/g, ' ') // normaliza espacios
       .trim();
   }
+
+    /**
+   * Descargar 1 archivo (especial para imagenes) para edición de bloques
+   */
+  async descargarImagenIndividual(
+    bucket: string,
+    objectKey: string,
+    res: express.Response
+  ) {
+    if (!objectKey) {
+      throw new BadRequestException('Se requiere el objectKey.');
+    }
+
+    try {
+      const stream = await this.minioService.getFileStream(bucket, objectKey);
+
+      // si quieres que el navegador descargue / inline
+      res.setHeader(
+        'Content-Disposition',
+        `inline; filename="${path.basename(objectKey)}"`
+      );
+
+      stream.pipe(res);
+    } catch (error) {
+      console.error('❌ Error al descargar archivo:', error);
+      throw new InternalServerErrorException(
+        'Error al descargar archivo desde MinIO.'
+      );
+    }
+  }
+
 
   // 📦 Exportar un expediente completo con estructura real (basada en rutas)
   async exportarCTD(expedienteId: string) {
@@ -245,11 +277,18 @@ export class ExportService {
       const stream = fs.createReadStream(zipPath);
       stream.pipe(res);
     } catch (error) {
-      console.error('❌ Error al generar ZIP:', error);
-      throw new InternalServerErrorException(
-        'Error al generar el ZIP del expediente.',
-      );
-    }
+  console.error('❌ Error al generar ZIP:', error);
+
+  // si es HttpException → la dejo pasar tal cual
+  if (error instanceof HttpException) {
+    throw error;
+  }
+
+  // todo lo no-controlado → si es interno: sí lo transformo a 500
+  throw new InternalServerErrorException(
+    'Error al generar el ZIP del expediente.',
+  );
+}
   }
 
   async descargarModuloCompleto(moduloId: string, res: express.Response) {

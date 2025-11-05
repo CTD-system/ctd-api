@@ -337,6 +337,40 @@ await this.minioService.uploadFile(
   return { message: 'Referencias bibliográficas actualizadas y subidas a MinIO.' };
 }
 
+async obtenerReferenciasWord(moduloId: string): Promise<string[]> {
+  const modulo = await this.moduloRepo.findOne({ where: { id: moduloId } });
+  if (!modulo) throw new NotFoundException('Módulo no encontrado.');
+
+  if (!modulo.referencias_word_nombre) return [];
+
+  // SIEMPRE: ruta que esta en MinIO = carpeta módulo + nombre archivo
+  const objectName = `${modulo.ruta}/${modulo.referencias_word_nombre}`.replace(/\\/g, '/');
+
+  const tempPath = path.join(process.cwd(), 'temp', `${modulo.id}_ref.docx`);
+  fs.mkdirSync(path.dirname(tempPath), { recursive: true });
+
+  // descargar desde minio
+  await this.minioService.downloadFile(
+    'ctd-expedientes',
+    objectName,
+    tempPath,
+  );
+
+  // leer docx
+  const buffer = fs.readFileSync(tempPath);
+  const mammoth = require("mammoth");
+  const result = await mammoth.extractRawText({ buffer });
+
+  const lineas = result.value
+    .split("\n")
+    .map(l => l.trim())
+    .filter(l => l.length > 0 && l !== "Referencias bibliográficas");
+
+  return lineas;
+}
+
+
+
   // Eliminar un módulo
   // Eliminar un módulo y todos sus submódulos recursivamente
 async remove(id: string) {

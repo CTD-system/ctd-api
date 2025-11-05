@@ -6,6 +6,8 @@ import {
   UseInterceptors,
   BadRequestException,
   Body,
+  UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -13,14 +15,19 @@ import {
   ApiConsumes,
   ApiBody,
   ApiResponse,
+  ApiBearerAuth,
 } from '@nestjs/swagger';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { Multer } from 'multer';
 import { MinioUploadService } from './minio-upload.service';
 import path from 'path';
+import { CurrentUser } from 'src/decorators/current-user.decorator';
+import { User } from '../users/entities/user.entity';
+import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
 
 @ApiTags('MinIO - Subida a MinIO')
+@ApiBearerAuth()
 @Controller('minio-upload')
 export class MinioUploadController {
   constructor(private readonly minioUploadService: MinioUploadService) {}
@@ -48,7 +55,44 @@ export class MinioUploadController {
   //   return this.minioUploadService.uploadExpediente(file);
   // }
 
+  @UseGuards(JwtAuthGuard)
+@Post('upload/imagen')
+@ApiOperation({ summary: 'Subir una imagen a MinIO y devolver URL pública' })
+@ApiConsumes('multipart/form-data')
+@ApiBody({
+  schema: {
+    type: 'object',
+    properties: {
+      file: { type: 'string', format: 'binary' },
+    },
+  },
+})
+@UseInterceptors(
+  FileInterceptor('file', {
+    storage: diskStorage({
+      destination: 'uploads/imagenes',
+      filename: (req, file, cb) => cb(null, file.originalname),
+    }),
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      if (!file.mimetype.startsWith('image/'))
+        return cb(
+          new BadRequestException('Solo se aceptan imágenes'),
+          false,
+        );
+      cb(null, true);
+    },
+  }),
+)
+async uploadImagen(@UploadedFile() file: Multer.File) {
+  return this.minioUploadService.uploadImagen(file);
+}
+
+
+
+
   // 📁 Subir módulo (.zip)
+  @UseGuards(JwtAuthGuard)
   @Post('modulo')
 @ApiOperation({ summary: 'Subir un módulo ZIP a MinIO y registrarlo en BD dentro de un expediente' })
 @ApiConsumes('multipart/form-data')
@@ -83,6 +127,7 @@ async uploadModulo(
 
 
   // 📄 Subir documentos (varios archivos)
+  @UseGuards(JwtAuthGuard)
  @Post('documento')
 @ApiOperation({
   summary: 'Subir uno o varios documentos a un módulo específico en MinIO y registrar en BD',
@@ -126,19 +171,24 @@ async uploadModulo(
   }),
 )
 async uploadDocumentos(
+  @CurrentUser() user: User,
   @UploadedFiles() files: Multer.File[],
   @Body('tipos') tipos: string[] | string,
   @Body('moduloId') moduloId: string,
-  @Body('creado_por') creado_por?: string,
+ 
 ) {
+
+  if (!user || !user.id) {
+    throw new UnauthorizedException('Usuario no autenticado');
+  }
   if (!moduloId) {
     throw new BadRequestException('Debe proporcionar un módulo válido (moduloId).');
   }
 
-  return this.minioUploadService.uploadDocumentos(files, tipos, moduloId, creado_por);
+  return this.minioUploadService.uploadDocumentos(files, tipos, moduloId, user.id);
 }
 
-
+  @UseGuards(JwtAuthGuard)
    @Post('import-ctd')
   @ApiOperation({ summary: 'Importar ZIP CTD: crear expediente/módulos/documentos y subir todo a MinIO' })
   @ApiConsumes('multipart/form-data')

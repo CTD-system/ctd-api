@@ -53,6 +53,10 @@ const newUser = this.userRepo.create({
   return this.userRepo.findOne({ where: { email } });
 }
 
+async findByUsername(username: string): Promise<User | null> {
+  return this.userRepo.findOne({ where: { username } });
+}
+
   // ✅ Actualizar usuario
   async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
     const user = await this.findOne(id);

@@ -41,7 +41,7 @@ export class PlantillaDTO {
   nombre: string;
 
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   @ApiProperty({
     description: 'Descripción de la plantilla',
     example: 'Plantilla para generar contratos de trabajo',

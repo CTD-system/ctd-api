@@ -13,10 +13,10 @@ export class AuthController {
     schema: {
       type: 'object',
       properties: {
-        username: { type: 'string', example: 'usuario@gmail.com' },
+        username: { type: 'string', example: 'usuario' },
         password: { type: 'string', example: '123456' },
       },
-      required: ['email', 'password'],
+      required: ['username', 'password'],
     },
   })
   @ApiResponse({

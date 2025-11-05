@@ -2,9 +2,14 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import * as bodyParser from 'body-parser'; // <-- importar body-parser
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+   app.use(bodyParser.json({ limit: '100mb' }));
+  app.use(bodyParser.urlencoded({ limit: '100mb', extended: true }));
+
    app.enableCors({
     origin: process.env.FRONTEND_URL || 'http://localhost:3000', // dominio del frontend
     credentials: true, // permite el uso de cookies o encabezados de autorización

@@ -14,8 +14,8 @@ export class AuthService {
    * Inicia sesión validando el email y la contraseña.
    * Retorna un token JWT válido y la información básica del usuario.
    */
-  async login(email: string, password: string) {
-    const user = await this.usersService.findByEmail(email);
+  async login(username: string, password: string) {
+    const user = await this.usersService.findByUsername(username);
     if (!user) {
       throw new UnauthorizedException('Usuario no encontrado');
     }
@@ -25,7 +25,7 @@ export class AuthService {
       throw new UnauthorizedException('Contraseña incorrecta');
     }
 
-    const payload = { sub: user.id, email: user.email };
+    const payload = { sub: user.id, username: user.username };
     return {
       access_token: this.jwtService.sign(payload),
       user: { id: user.id, username: user.username, email: user.email },
