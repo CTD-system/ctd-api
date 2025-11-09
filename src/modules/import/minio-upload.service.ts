@@ -247,6 +247,23 @@ export class MinioUploadService {
     };
   }
 
+  private async getNombreDisponibleGlobal(nombreArchivo: string) {
+  const extension = path.extname(nombreArchivo);
+  const base = path.basename(nombreArchivo, extension);
+
+  let nombreFinal = nombreArchivo;
+  let contador = 1;
+
+  while (await this.documentoRepo.findOne({ where: { nombre: nombreFinal } })) {
+    nombreFinal = `${base} (${contador})${extension}`;
+    contador++;
+  }
+
+  return nombreFinal;
+}
+
+
+
   // 📄 Subida de documentos (no ZIP)
   async uploadDocumentos(
     files: Multer.File[],
@@ -324,14 +341,18 @@ export class MinioUploadService {
 
       await this.minioService.createFolder(bucket, baseRuta);
 
-      const objectKey = `${baseRuta}/${file.originalname}`;
+      // obtener nombre disponible
+const nombreDisponible = await this.getNombreDisponibleGlobal(file.originalname);
+
+// path con el nombre ajustado
+const objectKey = `${baseRuta}/${nombreDisponible}`;
       await this.minioService.uploadFile(bucket, objectKey, file.path);
 
       // Crear documento vinculado al módulo
       const doc = this.documentoRepo.create({
         modulo,
         subido_por: subido_por,
-        nombre: nombreLimpio,
+        nombre: nombreDisponible,
         tipo: tipoFinal,
         version: 1,
         ruta_archivo: objectKey,
@@ -351,7 +372,7 @@ export class MinioUploadService {
             file.path,
           );
           const plantilla = this.plantillaRepo.create({
-            nombre: `Plantilla_${nombreLimpio}`,
+            nombre: `Plantilla_${nombreDisponible}`,
             descripcion: `Plantilla creada desde ${file.originalname}`,
             tipo_archivo: file.mimetype,
             creado_por: subido_por ? ({ id: subido_por.id } as any) : undefined,
