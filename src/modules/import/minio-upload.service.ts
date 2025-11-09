@@ -337,7 +337,7 @@ export class MinioUploadService {
       const baseRuta =
         tipoFinal === DocumentoTipo.ANEXO
           ? `expedientes/${expediente.nombre}/ANEXOS/${modulo.titulo}`
-          : `expedientes/${expediente.nombre}/modulos/${modulo.titulo}`;
+          : `expedientes/${expediente.nombre}/${modulo.titulo}`;
 
       await this.minioService.createFolder(bucket, baseRuta);
 

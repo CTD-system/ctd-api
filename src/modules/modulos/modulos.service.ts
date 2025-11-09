@@ -376,13 +376,31 @@ async obtenerReferenciasWord(moduloId: string): Promise<string[]> {
 async remove(id: string) {
   const modulo = await this.moduloRepo.findOne({
     where: { id },
-    relations: ['submodulos'],
+    relations: ['submodulos','documentos'],
   });
   if (!modulo) throw new NotFoundException('Módulo no encontrado.');
 
+  
+
   // Función recursiva para eliminar submódulos
   const eliminarModuloRecursivo = async (mod: Modulo) => {
-    // Primero eliminamos submódulos
+    if (mod.documentos && mod.documentos.length > 0) {
+  for (const doc of mod.documentos) {
+
+    // borrar archivo del documento en Minio
+    try {
+      if (doc.ruta_archivo) {
+        await this.minioService.removeObject('ctd-expedientes', doc.ruta_archivo);
+      }
+    } catch (e) {
+      console.error('error borrando archivo de documento', e);
+    }
+
+    // borrar doc en BD
+    await this.documentoRepo.remove(doc);
+  }
+}
+    // Segundo eliminamos submódulos
     if (mod.submodulos && mod.submodulos.length > 0) {
       for (const sub of mod.submodulos) {
         // Cargar sub-submodulos
@@ -398,6 +416,7 @@ async remove(id: string) {
 
     // Eliminar carpeta en MinIO
     try {
+      
       if (mod.ruta) {
         await this.minioService.removeFolder('ctd-expedientes', mod.ruta);
       }

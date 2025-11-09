@@ -230,7 +230,7 @@ export class ExportService {
       }
 
       const expedienteCodigo = expediente.codigo; // por ejemplo: "EXP-2025-001"
-      const prefix = `expedientes/${expedienteCodigo}/`;
+      const prefix = `expedientes/${expediente.nombre}/`;
       // 🔍 Listar archivos del expediente
       const archivos = await this.minioService.listFilesByPrefix(
         'ctd-expedientes',
