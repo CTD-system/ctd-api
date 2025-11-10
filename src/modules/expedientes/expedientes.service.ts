@@ -14,6 +14,7 @@ import { Documento } from '../documentos/entities/documento.entity';
 import { MinioService } from '../minio.service';
 import path from 'path';
 import * as fs from 'fs';
+import { HistorialDocumento } from '../historial/entities/historial_documento.entity';
 @Injectable()
 export class ExpedientesService {
   constructor(
@@ -26,6 +27,8 @@ export class ExpedientesService {
     @InjectRepository(Modulo)
     private readonly moduloRepo: Repository<Modulo>,
 
+    @InjectRepository(HistorialDocumento)
+     private readonly historialDocumentoRepo: Repository<HistorialDocumento>,
     @InjectRepository(Documento)
     private readonly documentoRepo: Repository<Documento>,
     private readonly minioService: MinioService,
@@ -286,6 +289,8 @@ async asignarModulo(expedienteId: string, moduloId: string) {
       try {
         await this.minioService.removeObject('ctd-expedientes', documento.ruta_archivo);
       } catch {}
+      // Eliminar historial del documento
+await this.historialDocumentoRepo.delete({ documento: { id: documento.id } });
       await this.documentoRepo.remove(documento);
     }
   }

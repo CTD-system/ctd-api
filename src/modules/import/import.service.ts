@@ -140,79 +140,83 @@ export class ImportService {
     });
 
     // 🔁 Procesar carpetas recursivamente
-    let moduloCounter = 1;
-    const procesarCarpeta = async (folderPath: string, parentRuta: string,parentName = '') => {
-      const carpetaNombre = this.limpiarNombre(path.basename(folderPath));
-      const moduloRuta = path.join(parentRuta, carpetaNombre)
-      const modulo = await this.moduloRepo.save({
-        expediente,
-        numero: moduloCounter++,
-        titulo: parentName ? `${parentName} / ${carpetaNombre}` : carpetaNombre,
-        descripcion: `Módulo importado desde ${folderPath}`,
-        estado: ModuloEstado.BORRADOR,
-         ruta: moduloRuta.replace(/\\/g, '/'),
-      });
+let moduloCounter = 1;
+const procesarCarpeta = async (
+  folderPath: string,
+  parentRuta = '',  // ruta relativa desde la raíz del expediente
+  parentName = '',
+  esRaiz = false
+) => {
+  const carpetaNombre = this.limpiarNombre(path.basename(folderPath));
+  const moduloRuta = parentRuta ? path.join(parentRuta, carpetaNombre) : carpetaNombre;
 
-      const elementos = fs.readdirSync(folderPath);
+  let modulo: Modulo | null = null;
 
-      for (const elemento of elementos) {
-        const elementoPath = path.join(folderPath, elemento);
-        const stats = fs.lstatSync(elementoPath);
+  // No crear módulo si es la carpeta raíz
+  if (!esRaiz) {
+    modulo = await this.moduloRepo.save({
+      expediente,
+      numero: moduloCounter++,
+      titulo: parentName ? `${parentName} / ${carpetaNombre}` : carpetaNombre,
+      descripcion: `Módulo importado desde ${folderPath}`,
+      estado: ModuloEstado.BORRADOR,
+      ruta: moduloRuta.replace(/\\/g, '/'),
+    });
+  }
 
-        if (stats.isDirectory()) {
-          await procesarCarpeta(elementoPath,moduloRuta, carpetaNombre);
-        } else if (stats.isFile()) {
-          const ext = path.extname(elemento).toLowerCase();
-          const nombreSinExt = path.basename(elemento, ext);
+  const elementos = fs.readdirSync(folderPath);
 
-          // 📄 Word o Word+PDF asociados
-          if (ext === '.docx' || ext === '.doc') {
-            await this.documentoRepo.save({
-              modulo,
-              nombre: elemento,
-              tipo: DocumentoTipo.PLANTILLA,
-              version: 1,
-              ruta_archivo: elementoPath,
-              mime_type:
-                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            });
+  for (const elemento of elementos) {
+    const elementoPath = path.join(folderPath, elemento);
+    const stats = fs.lstatSync(elementoPath);
 
-            // Asociar PDF del mismo nombre como Plantilla también
-            const pdfPath = path.join(folderPath, `${nombreSinExt}.pdf`);
-            if (fs.existsSync(pdfPath)) {
-              await this.documentoRepo.save({
-                modulo,
-                nombre: `${nombreSinExt}.pdf`,
-                tipo: DocumentoTipo.PLANTILLA,
-                version: 1,
-                ruta_archivo: pdfPath,
-                mime_type: 'application/pdf',
-              });
-            }
-          } else if (ext === '.pdf') {
-            await this.documentoRepo.save({
-              modulo,
-              nombre: elemento,
-              tipo: DocumentoTipo.ANEXO,
-              version: 1,
-              ruta_archivo: elementoPath,
-              mime_type: 'application/pdf',
-            });
-          } else {
-            await this.documentoRepo.save({
-              modulo,
-              nombre: elemento,
-              tipo: DocumentoTipo.OTRO,
-              version: 1,
-              ruta_archivo: elementoPath,
-              mime_type: 'application/octet-stream',
-            });
-          }
-        }
+    if (stats.isDirectory()) {
+      await procesarCarpeta(
+        elementoPath,
+        moduloRuta,                   // la ruta relativa se propaga
+        modulo ? modulo.titulo : carpetaNombre,
+        false
+      );
+    } else if (stats.isFile() && modulo) {
+      const ext = path.extname(elemento).toLowerCase();
+      const nombreSinExt = path.basename(elemento, ext);
+
+      // Crear documento según extensión
+      if (ext === '.docx' || ext === '.doc') {
+        await this.documentoRepo.save({
+          modulo,
+          nombre: elemento,
+          tipo: DocumentoTipo.PLANTILLA,
+          version: 1,
+          ruta_archivo: elementoPath,
+          mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        });
+      } else if (ext === '.pdf') {
+        await this.documentoRepo.save({
+          modulo,
+          nombre: elemento,
+          tipo: DocumentoTipo.ANEXO,
+          version: 1,
+          ruta_archivo: elementoPath,
+          mime_type: 'application/pdf',
+        });
+      } else {
+        await this.documentoRepo.save({
+          modulo,
+          nombre: elemento,
+          tipo: DocumentoTipo.OTRO,
+          version: 1,
+          ruta_archivo: elementoPath,
+          mime_type: 'application/octet-stream',
+        });
       }
-    };
+    }
+  }
+};
 
-    await procesarCarpeta(basePath,expediente.codigo);
+// Llamada inicial: esRaiz = true para no crear módulo de la carpeta raíz
+await procesarCarpeta(basePath, '', '', true);
+
 
     return {
       message: `Expediente "${expediente.nombre}" importado correctamente con subcarpetas`,

@@ -401,8 +401,24 @@ export function estructuraToDocxChildren(estructura: any): any[] {
             (bloque.encabezados && bloque.encabezados.length > 0) ||
             (bloque.filas && bloque.filas.length > 0)
           ) {
-            children.push(crearTablaDocx(bloque));
-          }
+  // PARÁGRAFO SEPARADOR ANTES
+  children.push(
+    new Paragraph({
+      children: [],
+      spacing: { before: 100, after: 100 },
+    })
+  );
+
+  children.push(crearTablaDocx(bloque));
+
+  // PARÁGRAFO SEPARADOR DESPUÉS
+  children.push(
+    new Paragraph({
+      children: [],
+      spacing: { before: 100, after: 100 },
+    })
+  );
+}
           break;
         }
 

@@ -42,23 +42,18 @@ export class MinioUploadService {
 
   // 🔤 Limpia el nombre de archivo
   private limpiarNombre(nombre: string): string {
-    // 1️⃣ Decodificar correctamente a UTF-8
-    let decoded = iconv.decode(Buffer.from(nombre, 'binary'), 'utf-8');
+  // 1️⃣ Normalizar acentos y caracteres especiales
+  const normalizado = nombre.normalize('NFC');
 
-    // 2️⃣ Eliminar la extensión
+  // 2️⃣ Eliminar números al inicio seguidos de guion o underscore
+  const sinNumeros = normalizado.replace(/^\d+[_-]?/, '');
 
-    // 3️⃣ Eliminar números al inicio seguidos de guion o underscore
-    const sinNumeros = decoded.replace(/^\d+[_-]?/, '');
+  // 3️⃣ Eliminar caracteres inválidos para archivos
+  const caracteresValidos = sinNumeros.replace(/[\\/:*?"<>|]/g, '');
 
-    // 4️⃣ Eliminar caracteres inválidos para archivos
-    const caracteresValidos = sinNumeros.replace(/[\\/:*?"<>|]/g, '');
-
-    // 5️⃣ Normalizar acentos y caracteres especiales
-    const normalizado = caracteresValidos.normalize('NFC');
-
-    // 6️⃣ Reemplazar múltiples espacios por uno solo y hacer trim
-    return normalizado.replace(/\s+/g, ' ').trim();
-  }
+  // 4️⃣ Reemplazar múltiples espacios por uno solo y hacer trim
+  return caracteresValidos.replace(/\s+/g, ' ').trim();
+}
 
   // 📦 Subida de expediente ZIP
   // async uploadExpediente(file: Multer.File) {
@@ -259,6 +254,8 @@ export class MinioUploadService {
     contador++;
   }
 
+  
+
   return nombreFinal;
 }
 
@@ -306,6 +303,7 @@ export class MinioUploadService {
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      const originalNameUtf8 = Buffer.from(file.originalname, 'latin1').toString('utf8');
       const tipoInput = tiposArray[i]?.toLowerCase();
 
       if (path.extname(file.originalname).toLowerCase() === '.zip') {
@@ -314,8 +312,8 @@ export class MinioUploadService {
         );
       }
 
-      const nombreLimpio = this.limpiarNombre(file.originalname);
-      const nombreBase = path.parse(file.originalname).name.toLowerCase();
+      const nombreLimpio = this.limpiarNombre(originalNameUtf8 );
+      const nombreBase = path.parse(originalNameUtf8 ).name.toLowerCase();
 
       // Determinar tipo de documento
       let tipoFinal: DocumentoTipo;
@@ -342,8 +340,7 @@ export class MinioUploadService {
       await this.minioService.createFolder(bucket, baseRuta);
 
       // obtener nombre disponible
-const nombreDisponible = await this.getNombreDisponibleGlobal(file.originalname);
-
+const nombreDisponible = await this.getNombreDisponibleGlobal(originalNameUtf8 );
 // path con el nombre ajustado
 const objectKey = `${baseRuta}/${nombreDisponible}`;
       await this.minioService.uploadFile(bucket, objectKey, file.path);
@@ -373,7 +370,7 @@ const objectKey = `${baseRuta}/${nombreDisponible}`;
           );
           const plantilla = this.plantillaRepo.create({
             nombre: `Plantilla_${nombreDisponible}`,
-            descripcion: `Plantilla creada desde ${file.originalname}`,
+            descripcion: `Plantilla creada desde ${originalNameUtf8}`,
             tipo_archivo: file.mimetype,
             creado_por: subido_por ? ({ id: subido_por.id } as any) : undefined,
             ...config,
@@ -799,153 +796,178 @@ const objectKey = `${baseRuta}/${nombreDisponible}`;
   }
 
   async importarCTD(zipPath: string) {
-    if (!fs.existsSync(zipPath)) {
-      throw new BadRequestException('Archivo ZIP no encontrado');
-    }
+  if (!fs.existsSync(zipPath)) {
+    throw new BadRequestException('Archivo ZIP no encontrado');
+  }
 
-    // Crear carpeta temporal única
-    const tmpDir = path.join(
-      os.tmpdir(),
-      `ctd_import_${Date.now()}_${uuidv4()}`,
+  const tmpDir = path.join(os.tmpdir(), `ctd_import_${Date.now()}_${uuidv4()}`);
+  fs.mkdirSync(tmpDir, { recursive: true });
+  
+
+  try {
+    await extract(zipPath, { dir: path.resolve(tmpDir) });
+    this.validarEstructuraZip(tmpDir, 'expediente');
+// después de extract(zip)
+const zipNombre = path.basename(zipPath, path.extname(zipPath));
+const expedienteNombre = this.limpiarNombre(zipNombre);
+
+let baseFolders = fs.readdirSync(tmpDir).filter(f =>
+  fs.lstatSync(path.join(tmpDir, f)).isDirectory()
+);
+
+if (baseFolders.length === 0) {
+  // caso B: no hay carpetas → crear carpeta raíz
+  const nuevaCarpeta = path.join(tmpDir, expedienteNombre);
+  fs.mkdirSync(nuevaCarpeta);
+
+  // mover todos los archivos sueltos dentro
+  const todos = fs.readdirSync(tmpDir);
+  for (const f of todos) {
+    if (f === expedienteNombre) continue;
+    fs.renameSync(path.join(tmpDir, f), path.join(nuevaCarpeta, f));
+  }
+
+  baseFolders = [expedienteNombre];
+}
+
+else if (baseFolders.length === 1) {
+  // caso especial: renombrar la única carpeta a nombre_zip
+  const unica = baseFolders[0];
+  if (unica !== expedienteNombre) {
+    const oldPath = path.join(tmpDir, unica);
+    const newPath = path.join(tmpDir, expedienteNombre);
+    fs.renameSync(oldPath, newPath);
+    baseFolders = [expedienteNombre];
+  }
+}
+
+else {
+  // >1 carpeta en raíz → crear contenedor y mover todo dentro
+  const cont = path.join(tmpDir, expedienteNombre);
+  fs.mkdirSync(cont);
+  for (const f of baseFolders) {
+    fs.renameSync(path.join(tmpDir, f), path.join(cont, f));
+  }
+  baseFolders = [expedienteNombre];
+}
+
+// ahora SIEMPRE la raiz verdadera es esta:
+const basePath = path.join(tmpDir, baseFolders[0]);
+    const codigoExpediente = `EXP-${Date.now()}`;
+
+    const expediente = this.expedienteRepo.create({
+      codigo: codigoExpediente,
+      nombre: expedienteNombre,
+      descripcion: `Expediente importado desde ZIP ${zipNombre}`,
+      estado: ExpedienteEstado.BORRADOR,
+    });
+    const savedExpediente = await this.expedienteRepo.save(expediente);
+
+    const bucket = 'ctd-expedientes';
+    const expedienteBaseKey = `expedientes/${expedienteNombre}`;
+    await this.minioService.createFolder(bucket, expedienteBaseKey);
+
+    
+    const carpetaRaiz = baseFolders.find((f) =>
+      fs.lstatSync(path.join(tmpDir, f)).isDirectory()
     );
-    fs.mkdirSync(tmpDir, { recursive: true });
+    
 
-    try {
-      // Extraer ZIP a temporal
-      await extract(zipPath, { dir: path.resolve(tmpDir) });
+    // Contador de módulos
+    let moduloCounter = 1;
 
-      // Validar estructura (lanza si no es correcta)
-      this.validarEstructuraZip(tmpDir, 'expediente');
+    const uploadFileToMinio = async (localPath: string, objectKey: string) => {
+      await this.minioService.uploadFile(bucket, objectKey, localPath);
+      return objectKey;
+    };
 
-      // Buscar la carpeta raíz si existe
-      const baseFolders = fs.readdirSync(tmpDir);
-      const carpetaRaiz = baseFolders.find((f) =>
-        fs.lstatSync(path.join(tmpDir, f)).isDirectory(),
-      );
-      const basePath = carpetaRaiz ? path.join(tmpDir, carpetaRaiz) : tmpDir;
+    // Procesar carpetas recursivamente
+    const procesarCarpeta = async (
+      folderPath: string,
+      parentModulo: Modulo | null = null,
+      parentRuta: string = ''
+    ) => {
+      const elementos = fs.readdirSync(folderPath);
 
-      // Nombre limpio y creación del expediente en BD
-      const expedienteNombre = this.limpiarNombre(path.basename(basePath));
-      const codigoExpediente = `EXP-${Date.now()}`;
+      for (const elemento of elementos) {
+        const elementoPath = path.join(folderPath, elemento);
+        const stats = fs.lstatSync(elementoPath);
 
-      let user: User | null = null; // si necesitas asignar creado_por, búscalo previamente
+        if (stats.isDirectory()) {
+          const carpetaNombre = this.limpiarNombre(path.basename(elementoPath));
+          // Solo crear módulo si no es la carpeta raíz con nombre diferente al ZIP
+          
+          const crearModulo =
+            !(parentModulo === null && carpetaRaiz && carpetaNombre === carpetaRaiz);
 
-      const expediente = this.expedienteRepo.create({
-        codigo: codigoExpediente,
-        nombre: expedienteNombre,
-        descripcion: `Expediente importado desde carpeta ${expedienteNombre}`,
-        estado: ExpedienteEstado.BORRADOR,
-        creado_por: user || undefined,
-      });
-      const savedExpediente = await this.expedienteRepo.save(expediente);
+          let modulo: Modulo | null = null;
+          let moduloRuta = parentRuta ? path.posix.join(parentRuta, carpetaNombre) : carpetaNombre;
+          
 
-      // Crear carpeta raíz en MinIO: expedientes/{codigo}
-      const bucket = 'ctd-expedientes';
-      const expedienteBaseKey = `expedientes/${expedienteNombre}`;
-      await this.minioService.createFolder(bucket, expedienteBaseKey);
-
-      // Contador de módulos para numeración
-      let moduloCounter = 1;
-
-      // Helper: subir un archivo local a MinIO y devolver objectName
-      const uploadFileToMinio = async (
-        localPath: string,
-        objectKey: string,
-      ) => {
-        // objectKey es la ruta dentro del bucket, p. ej. expedientes/EXP-.../mod1/doc.pdf
-        await this.minioService.uploadFile(bucket, objectKey, localPath);
-        return objectKey;
-      };
-
-      // Procesar carpetas recursivamente creando módulos y documentos,
-      // y subiendo cada archivo a MinIO sin dejar copia local permanente.
-      const procesarCarpeta = async (
-        folderPath: string,
-        parentRuta: string,
-        parentName = '',
-      ) => {
-        const carpetaNombre = this.limpiarNombre(path.basename(folderPath));
-        const moduloRuta = path.posix
-          .join(parentRuta, carpetaNombre)
-          .replace(/\\/g, '/'); // ruta lógica
-        const tituloModulo = parentName
-          ? `${parentName} / ${carpetaNombre}`
-          : carpetaNombre;
-
-        const modulo = this.moduloRepo.create({
-          expediente: savedExpediente,
-          titulo: tituloModulo,
-          descripcion: `Módulo importado desde ${carpetaNombre}`,
-          estado: ModuloEstado.BORRADOR,
-          ruta: moduloRuta,
-        });
-        const savedModulo = await this.moduloRepo.save(modulo);
-
-        const elementos = fs.readdirSync(folderPath);
-        for (const elemento of elementos) {
-          const elementoPath = path.join(folderPath, elemento);
-          const stats = fs.lstatSync(elementoPath);
-
-          if (stats.isDirectory()) {
-            // Recursión: subcarpeta → submódulo
-            await procesarCarpeta(elementoPath, moduloRuta, carpetaNombre);
-          } else if (stats.isFile()) {
-            const ext = path.extname(elemento).toLowerCase();
-            const nombreSinExt = path.basename(elemento, ext);
-            // Construir objectKey en MinIO: expedientes/{codigo}/{ruta_relativa_al_base}
-            const relativePath = path
-              .relative(basePath, elementoPath)
-              .split(path.sep)
-              .join('/');
-            const objectKey = `${expedienteBaseKey}/${relativePath}`;
-
-            // Subir a MinIO
-            await uploadFileToMinio(elementoPath, objectKey);
-
-            // Determinar tipo de documento
-            let tipoDoc = DocumentoTipo.OTRO;
-            let mime = 'application/octet-stream';
-            if (ext === '.docx' || ext === '.doc') {
-              tipoDoc = DocumentoTipo.INFORME;
-              mime =
-                'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-            } else if (ext === '.pdf') {
-              tipoDoc = DocumentoTipo.ANEXO;
-              mime = 'application/pdf';
-            }
-
-            // Guardar registro Documento en BD; ruta_archivo apunta al objectKey en MinIO
-            await this.documentoRepo.save({
-              modulo: savedModulo,
-              nombre: elemento,
-              tipo: tipoDoc,
-              version: 1,
-              ruta_archivo: objectKey, // guardamos la key dentro del bucket
-              mime_type: mime,
+          if (crearModulo) {
+            modulo = await this.moduloRepo.save({
+              expediente: savedExpediente,
+              titulo: carpetaNombre,
+              descripcion: `Módulo importado desde ${carpetaNombre}`,
+              estado: ModuloEstado.BORRADOR,
+              ruta: moduloRuta,
+              moduloContenedor: parentModulo || undefined,
             });
+          } else {
+            // Si no se crea módulo, mantener parentModulo para sus subcarpetas
+            modulo = parentModulo;
+            moduloRuta = parentRuta; // no cambiar la ruta
           }
+
+          await procesarCarpeta(elementoPath, modulo, moduloRuta);
+        } else if (stats.isFile() && parentModulo) {
+          const ext = path.extname(elemento).toLowerCase();
+          const relativePath = path.relative(basePath, elementoPath).split(path.sep).join('/');
+          const objectKey = `${expedienteBaseKey}/${relativePath}`;
+
+          await uploadFileToMinio(elementoPath, objectKey);
+
+          let tipoDoc = DocumentoTipo.OTRO;
+          let mime = 'application/octet-stream';
+          if (ext === '.doc' || ext === '.docx') {
+            tipoDoc = DocumentoTipo.INFORME;
+            mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+          } else if (ext === '.pdf') {
+            tipoDoc = DocumentoTipo.ANEXO;
+            mime = 'application/pdf';
+          }
+
+          await this.documentoRepo.save({
+            modulo: parentModulo,
+            nombre: elemento,
+            tipo: tipoDoc,
+            version: 1,
+            ruta_archivo: objectKey,
+            mime_type: mime,
+          });
         }
-      };
-
-      // Ejecutar procesamiento desde basePath
-      await procesarCarpeta(basePath, codigoExpediente);
-
-      return {
-        message: `Expediente "${savedExpediente.nombre}" importado correctamente y subido a MinIO`,
-        expedienteId: savedExpediente.id,
-        bucket,
-        baseKey: expedienteBaseKey,
-      };
-    } finally {
-      // Eliminar directorio temporal siempre
-      try {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      } catch (e) {
-        // No bloquear si falla limpieza
-        console.warn('No se pudo eliminar temporal:', tmpDir, e);
       }
+    };
+
+    // Llamada inicial
+    await procesarCarpeta(basePath, null, '');
+
+    return {
+      message: `Expediente "${savedExpediente.nombre}" importado correctamente y subido a MinIO`,
+      expedienteId: savedExpediente.id,
+      bucket,
+      baseKey: expedienteBaseKey,
+    };
+  } finally {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch (e) {
+      console.warn('No se pudo eliminar temporal:', tmpDir, e);
     }
   }
+}
+
+
 
   //console.log('HTML a procesar:', html.substring(0, 7000));
 }
