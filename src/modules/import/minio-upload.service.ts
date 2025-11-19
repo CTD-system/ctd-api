@@ -529,8 +529,9 @@ const objectKey = `${baseRuta}/${nombreDisponible}`;
             this.agregarABloqueActual(imgBloque, bloques, currentCapitulo, currentSubCapitulo);
           });
         } else {
-          const parrafo = this.parsearParrafo(node);
-          this.agregarABloqueActual(parrafo, bloques, currentCapitulo, currentSubCapitulo);
+          const parrafos = this.parsearParrafo(node);
+parrafos.forEach((b) => this.agregarABloqueActual(b, bloques, currentCapitulo, currentSubCapitulo));
+
         }
         break;
 
@@ -600,21 +601,45 @@ const objectKey = `${baseRuta}/${nombreDisponible}`;
   }
 
   /** --- 📝 Procesar párrafos con negrita, enlaces, placeholders --- **/
-  private parsearParrafo(node: Element) {
-    const html = node.innerHTML.trim();
+  private parsearParrafo(node: Element): any[] {
+  const bloques: any[] = [];
 
-    // Extraer placeholders como {{variable}}
-    const placeholders = [...html.matchAll(/{{(.*?)}}/g)].map((m) =>
-      m[1].trim(),
-    );
+  node.childNodes.forEach((child) => {
+    if (child.nodeType === 3) {
+      // Nodo de texto
+      const text = child.textContent?.trim();
+      if (text) {
+        bloques.push({
+          tipo: 'parrafo',
+          texto_html: text,
+          texto_plano: text,
+        });
+      }
+    } else if (child.nodeType === 1) {
+      // Nodo elemento
+      const el = child as Element;
+      if (el.tagName.toLowerCase() === 'img') {
+        const src = (el.getAttribute('src') || '').replace(/\s/g, '');
+        bloques.push({
+          tipo: 'imagen',
+          src,
+          alt: el.getAttribute('alt') || '',
+        });
+      } else {
+        // Otro elemento (ej. <strong>, <em>, etc.) → conservar HTML como párrafo
+        bloques.push({
+          tipo: 'parrafo',
+          texto_html: el.outerHTML,
+          texto_plano: el.textContent?.trim() || '',
+        });
+      }
+    }
+  });
 
-    return {
-      tipo: 'parrafo',
-      texto_html: html, // Conservamos el HTML limpio
-      texto_plano: node.textContent?.trim() || '',
-      placeholders: placeholders.length > 0 ? placeholders : undefined,
-    };
-  }
+  return bloques;
+}
+
+
 
   /** --- 📋 Procesar listas ul/ol --- **/
   private parsearLista(node: Element) {
@@ -668,9 +693,16 @@ const objectKey = `${baseRuta}/${nombreDisponible}`;
             rowSpan: td.rowSpan || 1,
           };
         } else {
+          // Buscar imágenes dentro de la celda
+          const imgs = Array.from(td.querySelectorAll('img')).map((img: any) => ({
+            tipo: 'imagen',
+            src: img.getAttribute('src') || '',
+            alt: img.getAttribute('alt') || '',
+          }));
           const text = td.textContent?.replace(/\s+/g, ' ').trim() || '';
           return {
             text,
+            imagenes: imgs.length > 0 ? imgs : undefined,
             element: td,
             colSpan: td.colSpan || 1,
             rowSpan: td.rowSpan || 1,
@@ -679,27 +711,10 @@ const objectKey = `${baseRuta}/${nombreDisponible}`;
       });
     });
 
-    let encabezados: any[] = [];
-    let filas: any[][] = [];
+        // 🔥 La primera fila SIEMPRE será encabezado
+    const encabezados = data[0] ?? [];
+    let filas = data.slice(1);
 
-    const thead = table.querySelector('thead');
-    if (thead) {
-      // Encabezados desde <thead>
-      encabezados = Array.from(thead.querySelectorAll('th')).map((th: any) => ({
-        text: th.textContent?.trim() || '',
-        element: th,
-        colSpan: th.colSpan || 1,
-        rowSpan: th.rowSpan || 1,
-      }));
-      filas = data.slice(thead.querySelectorAll('tr').length);
-    } else if (rows[0]?.querySelector('th')) {
-      // Primera fila con <th> como encabezado
-      encabezados = data[0];
-      filas = data.slice(1);
-    } else {
-      // No hay encabezados
-      filas = data;
-    }
 
     // Filtrar las celdas de la fila que contiene la tabla anidada (sin eliminar toda la fila)
     filas = filas.map((fila, index) => {
@@ -724,7 +739,7 @@ const objectKey = `${baseRuta}/${nombreDisponible}`;
 
     // Eliminamos las filas que quedan vacías después del filtrado de celdas
     filas = filas.filter((fila) => fila.length > 0);
-    console.log(filas);
+    //console.log(filas);
 
     return { tipo: 'tabla', encabezados, filas };
   }
