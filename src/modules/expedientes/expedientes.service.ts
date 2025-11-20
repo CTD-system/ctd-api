@@ -169,7 +169,7 @@ async asignarModulo(expedienteId: string, moduloId: string) {
   });
   if (!expediente) throw new NotFoundException('Expediente no encontrado.');
 
-  // 🔹 2. Buscar módulo origen con sus relaciones
+  // 🔹 2. Buscar módulo origen con todas sus relaciones
   const modulo = await this.moduloRepo.findOne({
     where: { id: moduloId },
     relations: [
@@ -182,40 +182,51 @@ async asignarModulo(expedienteId: string, moduloId: string) {
   });
   if (!modulo) throw new NotFoundException('Módulo no encontrado.');
 
-  const rutaOrigen = modulo.ruta;
-  const nuevaRuta = `expedientes/${expediente.codigo}/${modulo.titulo}`.replace(/\\/g, '/');
+  // 🔹 3. Obtener la ruta origen real (desde expediente actual del módulo)
+  const expedienteActual = modulo.expediente;
+  const rutaOrigen = expedienteActual 
+    ? `expedientes/${expedienteActual.nombre}/${modulo.titulo}`
+    : modulo.titulo;
+  const nuevaRuta = `expedientes/${expediente.nombre}/${modulo.titulo}`.replace(/\\/g, '/');
 
-  // 🔹 3. Mover los archivos dentro del bucket (sin descargarlos)
-  const objetos = await this.minioService.listFilesByPrefix(bucket, rutaOrigen + '/');
+  // 🔹 4. Mover archivos dentro del bucket
+  try {
+    const objetos = await this.minioService.listFilesByPrefix(bucket, rutaOrigen + '/');
+    
+    for (const oldPath of objetos) {
+      const relative = oldPath.replace(rutaOrigen + '/', '');
+      const newPath = `${nuevaRuta}/${relative}`;
 
-  for (const oldPath of objetos) {
-    const relative = oldPath.replace(rutaOrigen + '/', '');
-    const newPath = `${nuevaRuta}/${relative}`;
-    await this.minioService.ensureBucket(bucket);
-
-    // Copiar dentro del bucket
-    await this.minioService['minioClient'].copyObject(
-      bucket,
-      newPath,
-      `/${bucket}/${oldPath}`,
-    );
-
-    // Eliminar el original
-    await this.minioService.removeObject(bucket, oldPath);
+      // Usar copyObject a través de minioService si está disponible
+      try {
+        await this.minioService['minioClient'].copyObject(
+          bucket,
+          newPath,
+          `/${bucket}/${oldPath}`,
+        );
+        await this.minioService.removeObject(bucket, oldPath);
+      } catch (err) {
+        console.warn(`⚠️ Error moviendo ${oldPath}:`, err?.message);
+      }
+    }
+  } catch (err) {
+    console.warn('⚠️ Error listando archivos origen:', err?.message);
   }
 
-  // 🔹 4. Actualizar recursivamente los módulos y documentos
+  // 🔹 5. Actualizar recursivamente módulos y documentos
   const actualizarModuloRecursivo = async (mod: Modulo, parentRuta: string) => {
     mod.expediente = expediente;
     mod.ruta = `${parentRuta}/${mod.titulo}`.replace(/\\/g, '/');
     await this.moduloRepo.save(mod);
 
+    // Actualizar documentos del módulo actual
     for (const doc of mod.documentos ?? []) {
       const fileName = path.basename(doc.ruta_archivo);
       doc.ruta_archivo = `${mod.ruta}/${fileName}`;
       await this.documentoRepo.save(doc);
     }
 
+    // Procesar submódulos recursivamente
     const submodulos = await this.moduloRepo.find({
       where: { moduloContenedor: { id: mod.id } },
       relations: ['documentos'],
@@ -226,12 +237,12 @@ async asignarModulo(expedienteId: string, moduloId: string) {
     }
   };
 
-  await actualizarModuloRecursivo(modulo, `expedientes/${expediente.codigo}`);
+  await actualizarModuloRecursivo(modulo, `expedientes/${expediente.nombre}`);
 
-  // 🔹 5. Crear la nueva carpeta en MinIO (si no existe)
+  // 🔹 6. Crear la nueva carpeta en MinIO
   await this.minioService.createFolder(bucket, nuevaRuta);
 
-  // 🔹 6. Eliminar la carpeta original vacía
+  // 🔹 7. Eliminar la carpeta original vacía
   try {
     await this.minioService.removeFolder(bucket, rutaOrigen + '/');
   } catch (err) {
@@ -239,7 +250,7 @@ async asignarModulo(expedienteId: string, moduloId: string) {
   }
 
   return {
-    message: `📦 Módulo "${modulo.titulo}" movido y asignado al expediente "${expediente.codigo}" correctamente.`,
+    message: `📦 Módulo "${modulo.titulo}" movido y asignado al expediente "${expediente.nombre}" correctamente.`,
     nuevaRuta,
   };
 }

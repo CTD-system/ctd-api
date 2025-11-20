@@ -317,9 +317,11 @@ export class ExportService {
     const bucket = 'ctd-expedientes';
 
     // Ejemplo: expedientes/EXP-2025-001/modulos/Modulo_A
-    const prefix = modulo.ruta.endsWith('/')
-      ? modulo.ruta
-      : `${modulo.ruta}/`;
+    // const prefix = modulo.ruta.endsWith('/')
+    //   ? modulo.ruta
+    //   : `${modulo.ruta}/`;
+
+      const prefix = `${modulo.ruta}`
 
     // 🔍 Listar todos los objetos del módulo en MinIO
     const archivos = await this.minioService.listFilesByPrefix(bucket, prefix);

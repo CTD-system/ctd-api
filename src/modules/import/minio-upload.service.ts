@@ -175,7 +175,7 @@ export class MinioUploadService {
     const basePath = carpetaRaiz ? path.join(tmpDir, carpetaRaiz) : tmpDir;
 
     // Crear módulo en BD asociado al expediente
-    const moduloRuta = `${expedienteBaseKey}/modulos/${moduloNombre}`;
+    const moduloRuta = `${expedienteBaseKey}/${moduloNombre}`;
     const modulo = this.moduloRepo.create({
       titulo: moduloNombre,
       descripcion: `Módulo importado desde ${file.originalname}`,
@@ -916,7 +916,7 @@ const basePath = path.join(tmpDir, baseFolders[0]);
             !(parentModulo === null && carpetaRaiz && carpetaNombre === carpetaRaiz);
 
           let modulo: Modulo | null = null;
-          let moduloRuta = parentRuta ? path.posix.join(parentRuta, carpetaNombre) : carpetaNombre;
+          let moduloRuta = `${expedienteBaseKey}/${carpetaNombre}`;
           
 
           if (crearModulo) {

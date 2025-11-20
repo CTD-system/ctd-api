@@ -729,13 +729,7 @@ console.log("CHILDREN",children)
   const saved = await this.documentoRepo.save(documento);
 
   // 🔟 Registrar historial
-  await this.historialService.create({
-    documento_id: saved.id,
-    version: saved.version,
-    accion: HistorialAccion.CREADO,
-    usuario_id: user?.id,
-    comentario: 'Documento creado a partir de plantilla.',
-  });
+ 
 
   return saved;
 }
@@ -878,9 +872,7 @@ async remove(id: string) {
       nombre: `Plantilla_${safeDocName}`,
       descripcion: `Plantilla generada desde documento ${documento.nombre}`,
       tipo_archivo: documento.mime_type,
-      creado_por: documento.subido_por.id
-        ? ({ id: documento.subido_por.id } as User)
-        : undefined,
+     
       ...config,
     });
 
